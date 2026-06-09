@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Foggy Map — Fog of War</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'&gt;&lt;text y='.9em' font-size='90'&gt;🌫️&lt;/text&gt;&lt;/svg&gt;">
+</head>
+<body>
+  <header id="toolbar">
+    <div class="toolbar-group brand">
+      <span class="logo">🌫️</span>
+      <span class="title">Foggy&nbsp;Map</span>
+    </div>
+
+    <div class="toolbar-group">
+      <button id="btn-upload" class="btn" title="Upload a map image (O)">📂 Open map</button>
+      <input type="file" id="file-input" accept="image/*" hidden>
+    </div>
+
+    <div class="toolbar-group" id="tools">
+      <button class="btn tool" data-tool="reveal" title="Reveal brush (B)">🖌️ Reveal</button>
+      <button class="btn tool" data-tool="hide" title="Hide brush (H)">🌁 Hide</button>
+      <button class="btn tool" data-tool="reveal-rect" title="Reveal rectangle (R)">⬚ Reveal&nbsp;rect</button>
+      <button class="btn tool" data-tool="hide-rect" title="Hide rectangle (T)">▩ Hide&nbsp;rect</button>
+      <button class="btn tool" data-tool="pan" title="Pan (P, or hold Space / middle mouse)">✋ Pan</button>
+    </div>
+
+    <div class="toolbar-group">
+      <label class="slider-label" title="Brush size ([ and ] to adjust)">
+        Brush
+        <input type="range" id="brush-size" min="5" max="300" value="60">
+        <span id="brush-size-value">60</span>
+      </label>
+      <label class="slider-label" title="Edge softness of the brush">
+        Soft
+        <input type="range" id="brush-soft" min="0" max="100" value="50">
+      </label>
+    </div>
+
+    <div class="toolbar-group">
+      <button id="btn-undo" class="btn" title="Undo (Ctrl+Z)">↩️</button>
+      <button id="btn-redo" class="btn" title="Redo (Ctrl+Y)">↪️</button>
+      <button id="btn-cover-all" class="btn" title="Cover the whole map in fog">🌫️ Cover all</button>
+      <button id="btn-reveal-all" class="btn" title="Remove all fog">☀️ Reveal all</button>
+    </div>
+
+    <div class="toolbar-group">
+      <label class="slider-label" title="How transparent the fog looks to you (the GM). Players always see opaque fog.">
+        GM&nbsp;fog
+        <input type="range" id="fog-opacity" min="20" max="100" value="65">
+      </label>
+      <button id="btn-player-view" class="btn toggle" title="Toggle player view: fog becomes fully opaque (V)">🎭 Player view</button>
+    </div>
+
+    <div class="toolbar-group">
+      <button id="btn-zoom-out" class="btn" title="Zoom out (-)">➖</button>
+      <button id="btn-zoom-fit" class="btn" title="Fit map to window (0)">⛶ Fit</button>
+      <button id="btn-zoom-in" class="btn" title="Zoom in (+)">➕</button>
+    </div>
+
+    <div class="toolbar-group">
+      <button id="btn-save-session" class="btn" title="Download map + fog as a session file">💾 Save</button>
+      <button id="btn-load-session" class="btn" title="Load a previously saved session file">📥 Load</button>
+      <input type="file" id="session-input" accept=".json,.foggymap,application/json" hidden>
+      <button id="btn-export-png" class="btn" title="Export the player view as a PNG">🖼️ Export PNG</button>
+    </div>
+  </header>
+
+  <main id="viewport">
+    <div id="stage">
+      <canvas id="map-canvas"></canvas>
+      <canvas id="fog-canvas"></canvas>
+    </div>
+    <div id="rect-preview" hidden></div>
+    <div id="brush-cursor" hidden></div>
+
+    <div id="drop-hint">
+      <div class="drop-hint-inner">
+        <div class="drop-hint-icon">🗺️</div>
+        <h1>Drop a map image here</h1>
+        <p>or click <strong>📂 Open map</strong> to choose a file.</p>
+        <p class="muted">The map starts fully covered in fog. Use the reveal
+        brush to uncover areas as your players explore. Your work is
+        autosaved in this browser.</p>
+      </div>
+    </div>
+  </main>
+
+  <footer id="statusbar">
+    <span id="status-tool">Tool: Reveal brush</span>
+    <span id="status-zoom">Zoom: 100%</span>
+    <span id="status-save"></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
