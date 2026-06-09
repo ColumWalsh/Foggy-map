@@ -139,6 +139,15 @@ body {
   display: block;
 }
 
+#token-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Tokens re-enable pointer events individually; the layer itself must not
+     swallow brush strokes aimed at the canvases below. */
+  pointer-events: none;
+}
+
 #map-canvas {
   box-shadow: 0 0 0 1px var(--panel-edge), 0 12px 48px rgba(0, 0, 0, 0.6);
 }

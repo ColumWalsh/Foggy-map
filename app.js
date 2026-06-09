@@ -18,9 +18,12 @@
   const viewport = document.getElementById("viewport");
   const stage = document.getElementById("stage");
   const mapCanvas = document.getElementById("map-canvas");
+  const gridCanvas = document.getElementById("grid-canvas");
   const fogCanvas = document.getElementById("fog-canvas");
   const mapCtx = mapCanvas.getContext("2d");
+  const gridCtx = gridCanvas.getContext("2d");
   const fogCtx = fogCanvas.getContext("2d");
+  const tokenLayer = document.getElementById("token-layer");
   const rectPreview = document.getElementById("rect-preview");
   const brushCursor = document.getElementById("brush-cursor");
   const dropHint = document.getElementById("drop-hint");
@@ -52,6 +55,27 @@
     playerView: false,
     fogOpacity: 0.65,
   };
+
+  // Scene data, persisted in sessions alongside the map and fog.
+  let tokens = []; // {id, x, y, size, color, label, shape, imageId}
+  let images = {}; // token image library: id -> downscaled dataURL
+  const imageCache = {}; // id -> decoded HTMLImageElement (for PNG export)
+  let grid = defaultGrid();
+
+  function defaultGrid() {
+    return {
+      enabled: false,
+      cellSize: 50, // image pixels
+      offsetX: 0,
+      offsetY: 0,
+      color: "dark",
+      opacity: 0.5,
+      unitsPerCell: 5,
+      unitLabel: "ft",
+      snap: false,
+      diagRule: "euclidean", // or "dnd": diagonals count as 1 cell
+    };
+  }
 
   const undoStack = [];
   const redoStack = [];
@@ -111,11 +135,15 @@
   }
 
   // ---------- Map loading ----------
-  function loadMapFromDataUrl(dataUrl, fogDataUrl = null) {
+  // `session` is an optional saved-session object ({fog, grid, tokens,
+  // images}); omitting it starts a fresh scene for a newly uploaded map.
+  function loadMapFromDataUrl(dataUrl, session = null) {
     const img = new Image();
     img.onload = () => {
-      mapCanvas.width = fogCanvas.width = img.naturalWidth;
-      mapCanvas.height = fogCanvas.height = img.naturalHeight;
+      mapCanvas.width = gridCanvas.width = fogCanvas.width = img.naturalWidth;
+      mapCanvas.height = gridCanvas.height = fogCanvas.height = img.naturalHeight;
+      tokenLayer.style.width = `${img.naturalWidth}px`;
+      tokenLayer.style.height = `${img.naturalHeight}px`;
       mapCtx.drawImage(img, 0, 0);
       state.hasMap = true;
       state.mapDataUrl = dataUrl;
@@ -124,8 +152,15 @@
       updateUndoButtons();
       dropHint.hidden = true;
 
-      if (fogDataUrl) {
-        restoreFog(fogDataUrl).catch(() => coverAll(false));
+      tokens = session?.tokens || [];
+      images = session?.images || {};
+      grid = { ...defaultGrid(), ...(session?.grid || {}) };
+      ensureImageCache();
+      renderTokens();
+      drawGrid();
+
+      if (session?.fog) {
+        restoreFog(session.fog).catch(() => coverAll(false));
       } else {
         coverAll(false);
       }
@@ -149,7 +184,7 @@
   // ---------- Fog operations ----------
   function coverAll(withUndo = true) {
     if (!state.hasMap) return;
-    if (withUndo) pushUndo();
+    if (withUndo) pushUndo("fog");
     fogCtx.globalCompositeOperation = "source-over";
     fogCtx.fillStyle = FOG_COLOR;
     fogCtx.fillRect(0, 0, fogCanvas.width, fogCanvas.height);
@@ -158,7 +193,7 @@
 
   function revealAll() {
     if (!state.hasMap) return;
-    pushUndo();
+    pushUndo("fog");
     fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
     fogChanged();
   }
@@ -204,7 +239,7 @@
     const w = Math.abs(a.ix - b.ix);
     const h = Math.abs(a.iy - b.iy);
     if (w < 1 || h < 1) return;
-    pushUndo();
+    pushUndo("fog");
     if (mode === "reveal") {
       fogCtx.globalCompositeOperation = "destination-out";
       fogCtx.fillStyle = "rgba(0,0,0,1)";
@@ -220,12 +255,113 @@
     scheduleAutosave();
   }
 
+  // ---------- Grid ----------
+  function drawGrid() {
+    gridCtx.clearRect(0, 0, gridCanvas.width, gridCanvas.height);
+    if (!grid.enabled || grid.cellSize < 4) return;
+    const cs = grid.cellSize;
+    gridCtx.globalAlpha = grid.opacity;
+    gridCtx.strokeStyle = grid.color === "light" ? "#ffffff" : "#000000";
+    gridCtx.lineWidth = Math.max(1, cs / 60);
+    gridCtx.beginPath();
+    const sx = ((grid.offsetX % cs) + cs) % cs;
+    const sy = ((grid.offsetY % cs) + cs) % cs;
+    for (let x = sx; x <= gridCanvas.width; x += cs) {
+      gridCtx.moveTo(x, 0);
+      gridCtx.lineTo(x, gridCanvas.height);
+    }
+    for (let y = sy; y <= gridCanvas.height; y += cs) {
+      gridCtx.moveTo(0, y);
+      gridCtx.lineTo(gridCanvas.width, y);
+    }
+    gridCtx.stroke();
+    gridCtx.globalAlpha = 1;
+  }
+
+  // ---------- Tokens (rendering arrives with the token feature) ----------
+  function renderTokens() {}
+
+  // ---------- Token image library ----------
+  // Imported images are downscaled before storage: tokens render small, and
+  // full-size photos would blow the localStorage autosave budget.
+  const TOKEN_IMG_SIZE = 256;
+  let idCounter = 0;
+
+  function newId(prefix) {
+    return `${prefix}-${Date.now().toString(36)}-${idCounter++}`;
+  }
+
+  function importTokenImage(file) {
+    return new Promise((resolve, reject) => {
+      if (!file || !file.type.startsWith("image/")) {
+        reject(new Error("not an image"));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const k = Math.min(1, TOKEN_IMG_SIZE / Math.max(img.naturalWidth, img.naturalHeight));
+          const c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round(img.naturalWidth * k));
+          c.height = Math.max(1, Math.round(img.naturalHeight * k));
+          c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+          const keepAlpha = file.type === "image/png" || file.type === "image/webp";
+          const id = newId("img");
+          images[id] = keepAlpha
+            ? c.toDataURL("image/png")
+            : c.toDataURL("image/jpeg", 0.85);
+          ensureImageCache();
+          resolve(id);
+        };
+        img.onerror = reject;
+        img.src = reader.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function ensureImageCache() {
+    for (const [id, dataUrl] of Object.entries(images)) {
+      if (!imageCache[id]) {
+        const img = new Image();
+        img.src = dataUrl;
+        imageCache[id] = img;
+      }
+    }
+  }
+
   // ---------- Undo / redo ----------
-  function pushUndo() {
-    undoStack.push(fogCanvas.toDataURL("image/png"));
+  // The stacks hold tagged snapshots of a single state slice each:
+  // {type: "fog", data: dataURL} or {type: "tokens", data: JSON string}.
+  // Undoing an entry restores only that slice and pushes the slice's
+  // current state onto the other stack.
+  function snapshot(type) {
+    return type === "fog"
+      ? { type, data: fogCanvas.toDataURL("image/png") }
+      : { type, data: JSON.stringify(tokens) };
+  }
+
+  function pushUndoEntry(entry) {
+    undoStack.push(entry);
     if (undoStack.length > MAX_UNDO) undoStack.shift();
     redoStack.length = 0;
     updateUndoButtons();
+  }
+
+  function pushUndo(type) {
+    pushUndoEntry(snapshot(type));
+  }
+
+  function applySnapshot(entry) {
+    if (entry.type === "fog") {
+      restoreFog(entry.data).then(fogChanged);
+    } else {
+      tokens = JSON.parse(entry.data);
+      renderTokens();
+      scheduleAutosave();
+    }
   }
 
   function restoreFog(dataUrl) {
@@ -244,15 +380,17 @@
 
   function undo() {
     if (!undoStack.length) return;
-    redoStack.push(fogCanvas.toDataURL("image/png"));
-    restoreFog(undoStack.pop()).then(fogChanged);
+    const entry = undoStack.pop();
+    redoStack.push(snapshot(entry.type));
+    applySnapshot(entry);
     updateUndoButtons();
   }
 
   function redo() {
     if (!redoStack.length) return;
-    undoStack.push(fogCanvas.toDataURL("image/png"));
-    restoreFog(redoStack.pop()).then(fogChanged);
+    const entry = redoStack.pop();
+    undoStack.push(snapshot(entry.type));
+    applySnapshot(entry);
     updateUndoButtons();
   }
 
@@ -267,13 +405,24 @@
     autosaveTimer = setTimeout(autosave, 800);
   }
 
+  // Version 2 adds grid, tokens and the token image library; version 1
+  // files (map + fog only) still load, with the new fields defaulted.
+  function sessionData() {
+    return {
+      app: "foggymap",
+      version: 2,
+      map: state.mapDataUrl,
+      fog: fogCanvas.toDataURL("image/png"),
+      grid,
+      tokens,
+      images,
+    };
+  }
+
   function autosave() {
     if (!state.hasMap) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        map: state.mapDataUrl,
-        fog: fogCanvas.toDataURL("image/png"),
-      }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionData()));
       setStatus("Autosaved ✓");
     } catch (err) {
       setStatus("⚠️ Map too large for browser autosave — use 💾 Save instead.");
@@ -286,7 +435,7 @@
       if (!raw) return false;
       const data = JSON.parse(raw);
       if (!data.map) return false;
-      loadMapFromDataUrl(data.map, data.fog || null);
+      loadMapFromDataUrl(data.map, data);
       setStatus("Restored previous session.");
       return true;
     } catch {
@@ -296,15 +445,9 @@
 
   function saveSessionFile() {
     if (!state.hasMap) return;
-    const blob = new Blob(
-      [JSON.stringify({
-        app: "foggymap",
-        version: 1,
-        map: state.mapDataUrl,
-        fog: fogCanvas.toDataURL("image/png"),
-      })],
-      { type: "application/json" }
-    );
+    const blob = new Blob([JSON.stringify(sessionData())], {
+      type: "application/json",
+    });
     downloadBlob(blob, `foggymap-session-${timestamp()}.json`);
     setStatus("Session saved 💾");
   }
@@ -315,7 +458,7 @@
       try {
         const data = JSON.parse(reader.result);
         if (data.app !== "foggymap" || !data.map) throw new Error("bad file");
-        loadMapFromDataUrl(data.map, data.fog || null);
+        loadMapFromDataUrl(data.map, data);
         setStatus("Session loaded 📥");
       } catch {
         setStatus("⚠️ Not a valid Foggy Map session file.");
@@ -420,7 +563,7 @@
     const p = screenToImage(e.clientX, e.clientY);
 
     if (state.tool === "reveal" || state.tool === "hide") {
-      pushUndo();
+      pushUndo("fog");
       stroking = true;
       lastStamp = null;
       strokeTo(p.ix, p.iy, state.tool);
