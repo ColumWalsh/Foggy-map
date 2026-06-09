@@ -514,7 +514,7 @@
     const size = grid.enabled
       ? grid.cellSize
       : Math.max(24, Math.round(Math.min(mapCanvas.width, mapCanvas.height) / 20));
-    tokens.push({
+    const t = {
       id: newId("t"),
       x: Math.min(Math.max(p.ix, 0), mapCanvas.width),
       y: Math.min(Math.max(p.iy, 0), mapCanvas.height),
@@ -523,8 +523,10 @@
       label: `Token ${String.fromCharCode(65 + (tokens.length % 26))}`,
       shape: "circle",
       imageId: null,
-    });
-    selectToken(tokens[tokens.length - 1].id);
+    };
+    snapToken(t);
+    tokens.push(t);
+    selectToken(t.id);
     scheduleAutosave();
   }
 
@@ -592,13 +594,27 @@
     t.x = tokenDrag.origX + (p.ix - tokenDrag.startIx);
     t.y = tokenDrag.origY + (p.iy - tokenDrag.startIy);
     positionTokenEl(t);
+    // Live movement readout from the drag origin, same as the measure tool.
+    drawMeasureLine(
+      { ix: tokenDrag.origX, iy: tokenDrag.origY },
+      { ix: t.x, iy: t.y }
+    );
   });
+
+  // Snap a token's center to the center of the grid cell containing it.
+  function snapToken(t) {
+    if (!grid.snap || !grid.enabled) return;
+    const cs = grid.cellSize;
+    t.x = grid.offsetX + (Math.floor((t.x - grid.offsetX) / cs) + 0.5) * cs;
+    t.y = grid.offsetY + (Math.floor((t.y - grid.offsetY) / cs) + 0.5) * cs;
+  }
 
   function endTokenDrag() {
     if (!tokenDrag) return;
     const t = tokens.find((tk) => tk.id === tokenDrag.id);
     tokenLayer.querySelector(`[data-id="${tokenDrag.id}"]`)?.classList.remove("dragging");
     if (tokenDrag.moved && t) {
+      snapToken(t);
       positionTokenEl(t);
       scheduleAutosave();
     }
@@ -802,11 +818,68 @@
     out.height = mapCanvas.height;
     const ctx = out.getContext("2d");
     ctx.drawImage(mapCanvas, 0, 0);
+    if (grid.enabled) ctx.drawImage(gridCanvas, 0, 0);
     ctx.drawImage(fogCanvas, 0, 0); // fog at full opacity = what players see
+    for (const t of tokens) drawTokenOnCanvas(ctx, t);
     out.toBlob((blob) => {
       downloadBlob(blob, `foggymap-player-view-${timestamp()}.png`);
       setStatus("Player view exported 🖼️");
     }, "image/png");
+  }
+
+  // Mirror of the DOM token rendering for the exported image.
+  function drawTokenOnCanvas(ctx, t) {
+    const r = t.size / 2;
+    ctx.save();
+    ctx.beginPath();
+    if (t.shape === "square") {
+      roundedRectPath(ctx, t.x - r, t.y - r, t.size, t.size, t.size * 0.12);
+    } else {
+      ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
+    }
+    ctx.clip();
+    const img = t.imageId ? imageCache[t.imageId] : null;
+    if (img && img.complete && img.naturalWidth) {
+      // Cover-crop the image into the token bounds, like background-size: cover
+      const k = Math.max(t.size / img.naturalWidth, t.size / img.naturalHeight);
+      const sw = t.size / k;
+      const sh = t.size / k;
+      ctx.drawImage(
+        img,
+        (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh,
+        t.x - r, t.y - r, t.size, t.size
+      );
+    } else {
+      ctx.fillStyle = t.color;
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.font = `700 ${t.size * 0.36}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(initials(t.label), t.x, t.y);
+    }
+    ctx.restore();
+    // Ring border, drawn unclipped so it isn't halved
+    ctx.save();
+    ctx.strokeStyle = t.color;
+    ctx.lineWidth = Math.max(2, t.size * 0.06);
+    ctx.beginPath();
+    if (t.shape === "square") {
+      roundedRectPath(ctx, t.x - r, t.y - r, t.size, t.size, t.size * 0.12);
+    } else {
+      ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function roundedRectPath(ctx, x, y, w, h, r) {
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
   }
 
   function downloadBlob(blob, filename) {
