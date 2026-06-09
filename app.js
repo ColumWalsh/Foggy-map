@@ -42,6 +42,23 @@
   const statusZoom = document.getElementById("status-zoom");
   const statusSave = document.getElementById("status-save");
 
+  const overlayCanvas = document.getElementById("overlay-canvas");
+  const overlayCtx = overlayCanvas.getContext("2d");
+  const measureLabel = document.getElementById("measure-label");
+  const gridBtn = document.getElementById("btn-grid");
+  const gridPanel = document.getElementById("grid-panel");
+  const calibrateBtn = document.getElementById("btn-calibrate");
+  const calCellsInput = document.getElementById("cal-cells");
+  const gridSizeInput = document.getElementById("grid-size");
+  const gridOffXInput = document.getElementById("grid-off-x");
+  const gridOffYInput = document.getElementById("grid-off-y");
+  const gridColorInput = document.getElementById("grid-color");
+  const gridAlphaInput = document.getElementById("grid-alpha");
+  const gridUnitsInput = document.getElementById("grid-units");
+  const gridUnitLabelInput = document.getElementById("grid-unit-label");
+  const gridDiagInput = document.getElementById("grid-diag");
+  const gridSnapInput = document.getElementById("grid-snap");
+
   // ---------- State ----------
   const state = {
     hasMap: false,
@@ -87,6 +104,8 @@
   let rectStart = null; // {ix, iy} image coords
   let lastStamp = null; // {ix, iy}
   let spaceHeld = false;
+  let measureStart = null; // {ix, iy}
+  let toolBeforeCalibrate = null;
 
   const TOOL_LABELS = {
     reveal: "Reveal brush",
@@ -94,6 +113,8 @@
     "reveal-rect": "Reveal rectangle",
     "hide-rect": "Hide rectangle",
     pan: "Pan",
+    measure: "Measure",
+    calibrate: "Calibrate grid — drag a box along the map's grid",
   };
 
   // ---------- View transform ----------
@@ -109,6 +130,13 @@
     return {
       ix: (clientX - rect.left - state.panX) / state.scale,
       iy: (clientY - rect.top - state.panY) / state.scale,
+    };
+  }
+
+  function imageToScreen(ix, iy) {
+    return {
+      x: ix * state.scale + state.panX,
+      y: iy * state.scale + state.panY,
     };
   }
 
@@ -157,6 +185,7 @@
       grid = { ...defaultGrid(), ...(session?.grid || {}) };
       ensureImageCache();
       renderTokens();
+      syncGridUI();
       drawGrid();
 
       if (session?.fog) {
@@ -276,6 +305,94 @@
     }
     gridCtx.stroke();
     gridCtx.globalAlpha = 1;
+  }
+
+  function gridChanged() {
+    drawGrid();
+    scheduleAutosave();
+  }
+
+  function syncGridUI() {
+    gridBtn.classList.toggle("on", grid.enabled);
+    gridSizeInput.value = grid.cellSize;
+    gridOffXInput.value = Math.round(grid.offsetX * 10) / 10;
+    gridOffYInput.value = Math.round(grid.offsetY * 10) / 10;
+    gridColorInput.value = grid.color;
+    gridAlphaInput.value = Math.round(grid.opacity * 100);
+    gridUnitsInput.value = grid.unitsPerCell;
+    gridUnitLabelInput.value = grid.unitLabel;
+    gridDiagInput.value = grid.diagRule;
+    gridSnapInput.checked = grid.snap;
+  }
+
+  function applyCalibration(a, b) {
+    const w = Math.abs(a.ix - b.ix);
+    const h = Math.abs(a.iy - b.iy);
+    const n = Math.max(1, Math.round(+calCellsInput.value) || 1);
+    // Average both axes when the drag is a real box; a thin drag along one
+    // row/column of cells calibrates from its long side only.
+    const cs = (w > 8 && h > 8 ? (w + h) / 2 : Math.max(w, h)) / n;
+    if (!isFinite(cs) || cs < 4) {
+      setStatus("⚠️ Drag a bigger box to calibrate the grid.");
+      return;
+    }
+    grid.cellSize = Math.round(cs * 100) / 100;
+    grid.offsetX = Math.round((((Math.min(a.ix, b.ix) % cs) + cs) % cs) * 10) / 10;
+    grid.offsetY = Math.round((((Math.min(a.iy, b.iy) % cs) + cs) % cs) * 10) / 10;
+    grid.enabled = true;
+    syncGridUI();
+    gridChanged();
+    setTool(toolBeforeCalibrate || "reveal");
+    setStatus(`Grid calibrated: ${grid.cellSize}px per cell ✓`);
+  }
+
+  // ---------- Measuring ----------
+  function sizeOverlay() {
+    if (overlayCanvas.width !== viewport.clientWidth ||
+        overlayCanvas.height !== viewport.clientHeight) {
+      overlayCanvas.width = viewport.clientWidth;
+      overlayCanvas.height = viewport.clientHeight;
+    }
+  }
+
+  function clearOverlay() {
+    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    measureLabel.hidden = true;
+  }
+
+  function formatDistance(dxPx, dyPx) {
+    const cells =
+      grid.diagRule === "dnd"
+        ? Math.max(Math.abs(dxPx), Math.abs(dyPx)) / grid.cellSize
+        : Math.hypot(dxPx, dyPx) / grid.cellSize;
+    const units = Math.round(cells * grid.unitsPerCell * 10) / 10;
+    return `${cells.toFixed(1)} cells · ${units} ${grid.unitLabel}`;
+  }
+
+  function drawMeasureLine(fromImg, toImg) {
+    sizeOverlay();
+    const a = imageToScreen(fromImg.ix, fromImg.iy);
+    const b = imageToScreen(toImg.ix, toImg.iy);
+    const ctx = overlayCtx;
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    ctx.strokeStyle = "#5b8cff";
+    ctx.fillStyle = "#5b8cff";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([7, 5]);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const p of [a, b]) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    measureLabel.textContent = formatDistance(toImg.ix - fromImg.ix, toImg.iy - fromImg.iy);
+    measureLabel.style.left = `${b.x + 16}px`;
+    measureLabel.style.top = `${b.y + 16}px`;
+    measureLabel.hidden = false;
   }
 
   // ---------- Tokens (rendering arrives with the token feature) ----------
@@ -502,6 +619,7 @@
   function setTool(tool) {
     state.tool = tool;
     toolButtons.forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
+    calibrateBtn.classList.toggle("active", tool === "calibrate");
     statusTool.textContent = `Tool: ${TOOL_LABELS[tool]}`;
     updateViewportCursor();
   }
@@ -515,7 +633,10 @@
     );
     viewport.classList.toggle(
       "tool-rect",
-      !effectivePan && state.tool.endsWith("-rect")
+      !effectivePan &&
+        (state.tool.endsWith("-rect") ||
+          state.tool === "measure" ||
+          state.tool === "calibrate")
     );
     brushCursor.hidden = effectivePan || !state.tool.match(/^(reveal|hide)$/) || !state.hasMap;
   }
@@ -546,7 +667,7 @@
 
   // ---------- Pointer events ----------
   viewport.addEventListener("pointerdown", (e) => {
-    if (e.target.closest("#drop-hint")) return;
+    if (e.target.closest("#drop-hint, .panel")) return;
     const wantsPan =
       e.button === 1 || spaceHeld || state.tool === "pan";
 
@@ -567,11 +688,14 @@
       stroking = true;
       lastStamp = null;
       strokeTo(p.ix, p.iy, state.tool);
-    } else if (state.tool.endsWith("-rect")) {
+    } else if (state.tool.endsWith("-rect") || state.tool === "calibrate") {
       rectStart = p;
       rectPreview.classList.toggle("hide-mode", state.tool === "hide-rect");
       updateRectPreview(p, p);
       rectPreview.hidden = false;
+    } else if (state.tool === "measure") {
+      measureStart = p;
+      drawMeasureLine(p, p);
     }
   });
 
@@ -590,6 +714,8 @@
       strokeTo(p.ix, p.iy, state.tool);
     } else if (rectStart) {
       updateRectPreview(rectStart, p);
+    } else if (measureStart) {
+      drawMeasureLine(measureStart, p);
     }
   });
 
@@ -605,9 +731,17 @@
     }
     if (rectStart) {
       const p = screenToImage(e.clientX, e.clientY);
-      applyRect(rectStart, p, state.tool === "reveal-rect" ? "reveal" : "hide");
+      if (state.tool === "calibrate") {
+        applyCalibration(rectStart, p);
+      } else {
+        applyRect(rectStart, p, state.tool === "reveal-rect" ? "reveal" : "hide");
+      }
       rectStart = null;
       rectPreview.hidden = true;
+    }
+    if (measureStart) {
+      measureStart = null;
+      clearOverlay();
     }
   }
 
@@ -631,6 +765,7 @@
   }
 
   viewport.addEventListener("wheel", (e) => {
+    if (e.target.closest(".panel")) return;
     e.preventDefault();
     zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.1 : 1 / 1.1);
   }, { passive: false });
@@ -687,6 +822,63 @@
     updateFogOpacity();
   });
 
+  gridBtn.addEventListener("click", () => {
+    grid.enabled = !grid.enabled;
+    syncGridUI();
+    gridChanged();
+  });
+
+  document.getElementById("btn-grid-settings").addEventListener("click", () => {
+    gridPanel.hidden = !gridPanel.hidden;
+  });
+
+  calibrateBtn.addEventListener("click", () => {
+    if (state.tool === "calibrate") {
+      setTool(toolBeforeCalibrate || "reveal");
+      return;
+    }
+    toolBeforeCalibrate = state.tool;
+    setTool("calibrate");
+    setStatus("Drag a box along the map's grid to calibrate.");
+  });
+
+  gridSizeInput.addEventListener("input", () => {
+    grid.cellSize = Math.max(4, +gridSizeInput.value || grid.cellSize);
+    gridChanged();
+  });
+  gridOffXInput.addEventListener("input", () => {
+    grid.offsetX = +gridOffXInput.value || 0;
+    gridChanged();
+  });
+  gridOffYInput.addEventListener("input", () => {
+    grid.offsetY = +gridOffYInput.value || 0;
+    gridChanged();
+  });
+  gridColorInput.addEventListener("change", () => {
+    grid.color = gridColorInput.value;
+    gridChanged();
+  });
+  gridAlphaInput.addEventListener("input", () => {
+    grid.opacity = +gridAlphaInput.value / 100;
+    gridChanged();
+  });
+  gridUnitsInput.addEventListener("input", () => {
+    grid.unitsPerCell = +gridUnitsInput.value || 0;
+    scheduleAutosave();
+  });
+  gridUnitLabelInput.addEventListener("input", () => {
+    grid.unitLabel = gridUnitLabelInput.value;
+    scheduleAutosave();
+  });
+  gridDiagInput.addEventListener("change", () => {
+    grid.diagRule = gridDiagInput.value;
+    scheduleAutosave();
+  });
+  gridSnapInput.addEventListener("change", () => {
+    grid.snap = gridSnapInput.checked;
+    scheduleAutosave();
+  });
+
   undoBtn.addEventListener("click", undo);
   redoBtn.addEventListener("click", redo);
   document.getElementById("btn-cover-all").addEventListener("click", () => coverAll(true));
@@ -712,7 +904,7 @@
 
   // ---------- Keyboard shortcuts ----------
   document.addEventListener("keydown", (e) => {
-    if (e.target.matches("input, textarea")) return;
+    if (e.target.matches("input, textarea, select")) return;
 
     if (e.code === "Space") {
       if (!spaceHeld) {
@@ -741,6 +933,11 @@
       case "r": setTool("reveal-rect"); break;
       case "t": setTool("hide-rect"); break;
       case "p": setTool("pan"); break;
+      case "m": setTool("measure"); break;
+      case "g": gridBtn.click(); break;
+      case "escape":
+        if (state.tool === "calibrate") setTool(toolBeforeCalibrate || "reveal");
+        break;
       case "v": playerViewBtn.click(); break;
       case "o": fileInput.click(); break;
       case "0": fitToWindow(); break;
