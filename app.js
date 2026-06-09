@@ -1,11 +1,15 @@
 /* Foggy Map — fog of war for uploaded map images.
  *
- * Architecture: two stacked canvases sized to the map image.
+ * Architecture: stacked layers sized to the map image.
  *  - #map-canvas holds the uploaded image.
+ *  - #grid-canvas draws the distance grid (under the fog, so fogged areas
+ *    reveal nothing).
  *  - #fog-canvas holds an opaque fog layer; "revealing" erases fog pixels
  *    with destination-out compositing, "hiding" paints them back.
- * The stack is panned/zoomed with a CSS transform on #stage, so drawing
- * always happens in image-pixel coordinates.
+ *  - #token-layer holds tokens as DOM elements (drag, hit-testing, and
+ *    image cropping come free from the browser).
+ * The stack is panned/zoomed with a CSS transform on #stage, so drawing and
+ * token positions always live in image-pixel coordinates.
  */
 (() => {
   "use strict";
@@ -704,6 +708,7 @@
     } else {
       tokens = JSON.parse(entry.data);
       renderTokens();
+      updateTokenPanel(); // the selected token may have changed or vanished
       scheduleAutosave();
     }
   }
@@ -1339,5 +1344,6 @@
   setTool("reveal");
   updateFogOpacity();
   updateUndoButtons();
+  syncGridUI();
   tryRestoreSession();
 })();
