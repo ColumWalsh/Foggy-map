@@ -59,6 +59,14 @@
   const gridDiagInput = document.getElementById("grid-diag");
   const gridSnapInput = document.getElementById("grid-snap");
 
+  const tokenPanel = document.getElementById("token-panel");
+  const tokenLabelInput = document.getElementById("token-label");
+  const tokenColorsDiv = document.getElementById("token-colors");
+  const tokenSizeInput = document.getElementById("token-size");
+  const tokenShapeInput = document.getElementById("token-shape");
+  const tokenImageInput = document.getElementById("token-image-input");
+  const imageLibraryDiv = document.getElementById("image-library");
+
   // ---------- State ----------
   const state = {
     hasMap: false,
@@ -395,8 +403,211 @@
     measureLabel.hidden = false;
   }
 
-  // ---------- Tokens (rendering arrives with the token feature) ----------
-  function renderTokens() {}
+  // ---------- Tokens ----------
+  const PALETTE = [
+    "#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#1abc9c",
+    "#3498db", "#9b59b6", "#e84393", "#95a5a6", "#34495e",
+  ];
+
+  let selectedTokenId = null;
+  let tokenDrag = null; // {id, startIx, startIy, origX, origY, moved, before}
+
+  function selectedToken() {
+    return tokens.find((t) => t.id === selectedTokenId) || null;
+  }
+
+  function renderTokens() {
+    tokenLayer.innerHTML = "";
+    for (const t of tokens) {
+      const el = document.createElement("div");
+      el.className = "token";
+      el.dataset.id = t.id;
+      if (t.shape === "square") el.classList.add("square");
+      if (t.id === selectedTokenId) el.classList.add("selected");
+      positionTokenEl(t, el);
+      el.style.setProperty("--token-color", t.color);
+      el.style.borderWidth = `${Math.max(2, t.size * 0.06)}px`;
+      el.title = t.label;
+      if (t.imageId && images[t.imageId]) {
+        el.style.backgroundImage = `url("${images[t.imageId]}")`;
+      } else {
+        const span = document.createElement("span");
+        span.textContent = initials(t.label);
+        span.style.fontSize = `${t.size * 0.36}px`;
+        el.appendChild(span);
+      }
+      tokenLayer.appendChild(el);
+    }
+  }
+
+  function positionTokenEl(t, el = tokenLayer.querySelector(`[data-id="${t.id}"]`)) {
+    if (!el) return;
+    el.style.left = `${t.x - t.size / 2}px`;
+    el.style.top = `${t.y - t.size / 2}px`;
+    el.style.width = el.style.height = `${t.size}px`;
+  }
+
+  function initials(label) {
+    const words = (label || "").trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return "?";
+    return words.length === 1
+      ? words[0].slice(0, 2)
+      : words[0][0] + words[1][0];
+  }
+
+  function selectToken(id) {
+    selectedTokenId = id;
+    renderTokens();
+    updateTokenPanel();
+  }
+
+  // Re-render tokens and refresh the inspector after a discrete change.
+  function tokenChanged() {
+    renderTokens();
+    updateTokenPanel();
+    scheduleAutosave();
+  }
+
+  function updateTokenPanel() {
+    const t = selectedToken();
+    tokenPanel.hidden = !t;
+    if (!t) return;
+    gridPanel.hidden = true;
+    tokenLabelInput.value = t.label;
+    tokenSizeInput.value = t.size;
+    tokenShapeInput.value = t.shape;
+
+    tokenColorsDiv.innerHTML = "";
+    for (const c of PALETTE) {
+      const s = document.createElement("div");
+      s.className = "swatch" + (c === t.color ? " active" : "");
+      s.style.background = c;
+      s.title = "Token color";
+      s.addEventListener("click", () => {
+        pushUndo("tokens");
+        t.color = c;
+        tokenChanged();
+      });
+      tokenColorsDiv.appendChild(s);
+    }
+
+    imageLibraryDiv.innerHTML = "";
+    for (const [id, dataUrl] of Object.entries(images)) {
+      const im = document.createElement("img");
+      im.className = "lib-thumb" + (id === t.imageId ? " active" : "");
+      im.src = dataUrl;
+      im.title = "Use this image";
+      im.addEventListener("click", () => {
+        pushUndo("tokens");
+        t.imageId = id;
+        tokenChanged();
+      });
+      imageLibraryDiv.appendChild(im);
+    }
+  }
+
+  function addToken() {
+    if (!state.hasMap) return;
+    pushUndo("tokens");
+    const r = viewport.getBoundingClientRect();
+    const p = screenToImage(r.left + r.width / 2, r.top + r.height / 2);
+    const size = grid.enabled
+      ? grid.cellSize
+      : Math.max(24, Math.round(Math.min(mapCanvas.width, mapCanvas.height) / 20));
+    tokens.push({
+      id: newId("t"),
+      x: Math.min(Math.max(p.ix, 0), mapCanvas.width),
+      y: Math.min(Math.max(p.iy, 0), mapCanvas.height),
+      size,
+      color: PALETTE[tokens.length % PALETTE.length],
+      label: `Token ${String.fromCharCode(65 + (tokens.length % 26))}`,
+      shape: "circle",
+      imageId: null,
+    });
+    selectToken(tokens[tokens.length - 1].id);
+    scheduleAutosave();
+  }
+
+  function deleteSelectedToken() {
+    if (!selectedToken()) return;
+    pushUndo("tokens");
+    tokens = tokens.filter((t) => t.id !== selectedTokenId);
+    selectToken(null);
+    scheduleAutosave();
+  }
+
+  function duplicateSelectedToken() {
+    const t = selectedToken();
+    if (!t) return;
+    pushUndo("tokens");
+    const copy = { ...t, id: newId("t"), x: t.x + t.size * 1.15, y: t.y };
+    tokens.push(copy);
+    selectToken(copy.id);
+    scheduleAutosave();
+  }
+
+  // Token dragging works regardless of the active tool: handlers live on the
+  // token layer and stop propagation so the brush underneath doesn't paint.
+  tokenLayer.addEventListener("pointerdown", (e) => {
+    const el = e.target.closest(".token");
+    if (!el || e.button !== 0) return;
+    e.stopPropagation();
+    const t = tokens.find((tk) => tk.id === el.dataset.id);
+    if (!t) return;
+    const before = JSON.stringify(tokens);
+    selectToken(t.id);
+    // selectToken re-rendered the layer; capture on the fresh element
+    const liveEl = tokenLayer.querySelector(`[data-id="${t.id}"]`);
+    const p = screenToImage(e.clientX, e.clientY);
+    tokenDrag = {
+      id: t.id,
+      startIx: p.ix,
+      startIy: p.iy,
+      origX: t.x,
+      origY: t.y,
+      moved: false,
+      before,
+    };
+    liveEl.setPointerCapture(e.pointerId);
+    liveEl.classList.add("dragging");
+  });
+
+  tokenLayer.addEventListener("pointermove", (e) => {
+    if (!tokenDrag) return;
+    const t = tokens.find((tk) => tk.id === tokenDrag.id);
+    if (!t) {
+      tokenDrag = null;
+      return;
+    }
+    const p = screenToImage(e.clientX, e.clientY);
+    if (!tokenDrag.moved) {
+      const screenDist = Math.hypot(
+        (p.ix - tokenDrag.startIx) * state.scale,
+        (p.iy - tokenDrag.startIy) * state.scale
+      );
+      if (screenDist < 4) return; // click, not a drag: no undo entry yet
+      tokenDrag.moved = true;
+      pushUndoEntry({ type: "tokens", data: tokenDrag.before });
+    }
+    t.x = tokenDrag.origX + (p.ix - tokenDrag.startIx);
+    t.y = tokenDrag.origY + (p.iy - tokenDrag.startIy);
+    positionTokenEl(t);
+  });
+
+  function endTokenDrag() {
+    if (!tokenDrag) return;
+    const t = tokens.find((tk) => tk.id === tokenDrag.id);
+    tokenLayer.querySelector(`[data-id="${tokenDrag.id}"]`)?.classList.remove("dragging");
+    if (tokenDrag.moved && t) {
+      positionTokenEl(t);
+      scheduleAutosave();
+    }
+    tokenDrag = null;
+    clearOverlay();
+  }
+
+  tokenLayer.addEventListener("pointerup", endTokenDrag);
+  tokenLayer.addEventListener("pointercancel", endTokenDrag);
 
   // ---------- Token image library ----------
   // Imported images are downscaled before storage: tokens render small, and
@@ -680,6 +891,7 @@
     }
 
     if (e.button !== 0 || !state.hasMap) return;
+    if (selectedTokenId) selectToken(null); // click-through on the map deselects
     viewport.setPointerCapture(e.pointerId);
     const p = screenToImage(e.clientX, e.clientY);
 
@@ -785,7 +997,25 @@
   );
   viewport.addEventListener("drop", (e) => {
     const file = e.dataTransfer.files?.[0];
-    if (file) handleImageFile(file);
+    if (!file) return;
+    // Dropping an image onto a token sets its portrait; anywhere else
+    // replaces the map.
+    const tokenEl = e.target.closest(".token");
+    if (tokenEl && file.type.startsWith("image/")) {
+      const t = tokens.find((tk) => tk.id === tokenEl.dataset.id);
+      if (t) {
+        importTokenImage(file)
+          .then((id) => {
+            pushUndo("tokens");
+            t.imageId = id;
+            selectToken(t.id);
+            scheduleAutosave();
+          })
+          .catch(() => setStatus("⚠️ Could not read that image file."));
+        return;
+      }
+    }
+    handleImageFile(file);
   });
 
   document.addEventListener("paste", (e) => {
@@ -879,6 +1109,70 @@
     scheduleAutosave();
   });
 
+  document.getElementById("btn-add-token").addEventListener("click", addToken);
+
+  tokenLabelInput.addEventListener("input", () => {
+    const t = selectedToken();
+    if (!t) return;
+    t.label = tokenLabelInput.value;
+    renderTokens();
+    scheduleAutosave();
+  });
+
+  tokenSizeInput.addEventListener("input", () => {
+    const t = selectedToken();
+    if (!t) return;
+    t.size = +tokenSizeInput.value;
+    renderTokens();
+    scheduleAutosave();
+  });
+
+  document.getElementById("btn-token-cell").addEventListener("click", () => {
+    const t = selectedToken();
+    if (!t) return;
+    pushUndo("tokens");
+    t.size = grid.cellSize;
+    tokenChanged();
+  });
+
+  tokenShapeInput.addEventListener("change", () => {
+    const t = selectedToken();
+    if (!t) return;
+    pushUndo("tokens");
+    t.shape = tokenShapeInput.value;
+    tokenChanged();
+  });
+
+  document.getElementById("btn-token-image").addEventListener("click", () => {
+    tokenImageInput.click();
+  });
+
+  tokenImageInput.addEventListener("change", () => {
+    const file = tokenImageInput.files[0];
+    tokenImageInput.value = "";
+    if (!file) return;
+    importTokenImage(file)
+      .then((id) => {
+        const t = selectedToken();
+        if (!t) return;
+        pushUndo("tokens");
+        t.imageId = id;
+        tokenChanged();
+      })
+      .catch(() => setStatus("⚠️ Could not read that image file."));
+  });
+
+  document.getElementById("btn-token-clear-image").addEventListener("click", () => {
+    const t = selectedToken();
+    if (!t || !t.imageId) return;
+    pushUndo("tokens");
+    t.imageId = null;
+    tokenChanged();
+  });
+
+  document.getElementById("btn-token-duplicate").addEventListener("click", duplicateSelectedToken);
+  document.getElementById("btn-token-delete").addEventListener("click", deleteSelectedToken);
+
   undoBtn.addEventListener("click", undo);
   redoBtn.addEventListener("click", redo);
   document.getElementById("btn-cover-all").addEventListener("click", () => coverAll(true));
@@ -935,8 +1229,14 @@
       case "p": setTool("pan"); break;
       case "m": setTool("measure"); break;
       case "g": gridBtn.click(); break;
+      case "n": addToken(); break;
+      case "delete":
+      case "backspace":
+        deleteSelectedToken();
+        break;
       case "escape":
         if (state.tool === "calibrate") setTool(toolBeforeCalibrate || "reveal");
+        else if (selectedTokenId) selectToken(null);
         break;
       case "v": playerViewBtn.click(); break;
       case "o": fileInput.click(); break;
