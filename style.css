@@ -11,6 +11,10 @@
 
 * { box-sizing: border-box; }
 
+/* Author display rules (e.g. #drop-hint's flex) would otherwise override
+   the UA stylesheet's [hidden] handling. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
