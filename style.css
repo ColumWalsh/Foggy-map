@@ -1,0 +1,217 @@
+:root {
+  --bg: #14161c;
+  --panel: #1e222c;
+  --panel-edge: #2c3242;
+  --text: #d8dce6;
+  --text-muted: #8a92a6;
+  --accent: #5b8cff;
+  --accent-soft: rgba(91, 140, 255, 0.18);
+  --danger: #ff6b6b;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- Toolbar ---------- */
+
+#toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--panel-edge);
+  user-select: none;
+  z-index: 10;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-group:not(:last-child) {
+  padding-right: 14px;
+  border-right: 1px solid var(--panel-edge);
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.brand .logo { font-size: 18px; }
+
+.btn {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--panel-edge);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.btn:hover { background: rgba(255, 255, 255, 0.06); }
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn.active,
+.btn.toggle.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.slider-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.slider-label input[type="range"] {
+  width: 80px;
+  accent-color: var(--accent);
+}
+
+#brush-size-value {
+  min-width: 26px;
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Viewport ---------- */
+
+#viewport {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at center, rgba(91, 140, 255, 0.05), transparent 70%),
+    repeating-conic-gradient(#181b22 0% 25%, #14161c 0% 50%) 0 0 / 32px 32px;
+  touch-action: none;
+}
+
+#viewport.tool-pan { cursor: grab; }
+#viewport.panning { cursor: grabbing; }
+#viewport.tool-brush { cursor: none; }
+#viewport.tool-rect { cursor: crosshair; }
+
+#stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+#stage canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+}
+
+#map-canvas {
+  box-shadow: 0 0 0 1px var(--panel-edge), 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+
+#rect-preview {
+  position: absolute;
+  border: 2px dashed var(--accent);
+  background: var(--accent-soft);
+  pointer-events: none;
+  z-index: 5;
+}
+
+#rect-preview.hide-mode {
+  border-color: var(--danger);
+  background: rgba(255, 107, 107, 0.15);
+}
+
+#brush-cursor {
+  position: absolute;
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  z-index: 6;
+}
+
+#brush-cursor.hide-mode { border-color: var(--danger); }
+
+/* ---------- Drop hint (empty state) ---------- */
+
+#drop-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.drop-hint-inner {
+  text-align: center;
+  max-width: 420px;
+  padding: 36px 44px;
+  border: 2px dashed var(--panel-edge);
+  border-radius: 16px;
+  background: rgba(20, 22, 28, 0.7);
+}
+
+.drop-hint-icon { font-size: 56px; }
+
+.drop-hint-inner h1 {
+  margin: 12px 0 6px;
+  font-size: 20px;
+}
+
+.drop-hint-inner p { margin: 6px 0; }
+
+.muted { color: var(--text-muted); font-size: 12px; }
+
+#viewport.drag-over .drop-hint-inner {
+  border-color: var(--accent);
+  background: rgba(91, 140, 255, 0.08);
+}
+
+/* ---------- Status bar ---------- */
+
+#statusbar {
+  display: flex;
+  gap: 24px;
+  padding: 4px 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--panel-edge);
+  color: var(--text-muted);
+  font-size: 12px;
+  user-select: none;
+}
+
+#status-save { margin-left: auto; }
