@@ -25,6 +25,13 @@
       <button class="btn tool" data-tool="reveal-rect" title="Reveal rectangle (R)">⬚ Reveal&nbsp;rect</button>
       <button class="btn tool" data-tool="hide-rect" title="Hide rectangle (T)">▩ Hide&nbsp;rect</button>
       <button class="btn tool" data-tool="pan" title="Pan (P, or hold Space / middle mouse)">✋ Pan</button>
+      <button class="btn tool" data-tool="measure" title="Measure distance (M)">📏</button>
+    </div>
+
+    <div class="toolbar-group">
+      <button id="btn-grid" class="btn toggle" title="Toggle grid overlay (G)">🔲 Grid</button>
+      <button id="btn-grid-settings" class="btn" title="Grid settings (calibrate, distance scale)">⚙️</button>
+      <button id="btn-add-token" class="btn" title="Add a token at the center of the view (N)">➕ Token</button>
     </div>
 
     <div class="toolbar-group">
@@ -71,10 +78,94 @@
   <main id="viewport">
     <div id="stage">
       <canvas id="map-canvas"></canvas>
+      <canvas id="grid-canvas"></canvas>
       <canvas id="fog-canvas"></canvas>
+      <div id="token-layer"></div>
     </div>
     <div id="rect-preview" hidden></div>
     <div id="brush-cursor" hidden></div>
+    <canvas id="overlay-canvas"></canvas>
+    <div id="measure-label" hidden></div>
+
+    <div id="grid-panel" class="panel" hidden>
+      <h3>Grid settings</h3>
+      <div class="panel-row">
+        <button id="btn-calibrate" class="btn">🎯 Calibrate</button>
+        <label class="inline">across
+          <input type="number" id="cal-cells" min="1" max="50" step="1" value="1">
+          cell(s)</label>
+      </div>
+      <p class="muted">Calibrate: drag a box along the map's printed grid,
+      spanning the number of cells above.</p>
+      <div class="panel-row">
+        <label class="inline">Cell size
+          <input type="number" id="grid-size" min="4" step="0.5"> px</label>
+      </div>
+      <div class="panel-row">
+        <label class="inline">Offset X
+          <input type="number" id="grid-off-x" step="1"></label>
+        <label class="inline">Y
+          <input type="number" id="grid-off-y" step="1"></label>
+      </div>
+      <div class="panel-row">
+        <label class="inline">Lines
+          <select id="grid-color">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select></label>
+        <input type="range" id="grid-alpha" min="10" max="100" value="50"
+               title="Grid line opacity">
+      </div>
+      <div class="panel-row">
+        <label class="inline">1 cell =
+          <input type="number" id="grid-units" min="0" step="any" value="5">
+          <input type="text" id="grid-unit-label" value="ft" maxlength="8" class="tiny"></label>
+      </div>
+      <div class="panel-row">
+        <label class="inline">Diagonals
+          <select id="grid-diag">
+            <option value="euclidean">Euclidean</option>
+            <option value="dnd">D&amp;D 5e (diag = 1 cell)</option>
+          </select></label>
+      </div>
+      <div class="panel-row">
+        <label class="inline">
+          <input type="checkbox" id="grid-snap"> Snap tokens to grid</label>
+      </div>
+    </div>
+
+    <div id="token-panel" class="panel" hidden>
+      <h3>Token</h3>
+      <div class="panel-row">
+        <label class="inline">Label
+          <input type="text" id="token-label" maxlength="24"></label>
+      </div>
+      <div id="token-colors" class="swatches"></div>
+      <div class="panel-row">
+        <label class="inline">Size
+          <input type="range" id="token-size" min="10" max="400"></label>
+        <button id="btn-token-cell" class="btn" title="Resize to one grid cell">1 cell</button>
+      </div>
+      <div class="panel-row">
+        <label class="inline">Shape
+          <select id="token-shape">
+            <option value="circle">Circle</option>
+            <option value="square">Square</option>
+          </select></label>
+      </div>
+      <div class="panel-row">
+        <button id="btn-token-image" class="btn">🖼️ Set image…</button>
+        <button id="btn-token-clear-image" class="btn">✖ No image</button>
+        <input type="file" id="token-image-input" accept="image/*" hidden>
+      </div>
+      <div id="image-library" class="swatches"></div>
+      <p class="muted">Tip: drop an image file onto a token to set its
+      portrait. Click a library thumbnail to reuse one.</p>
+      <div class="panel-row">
+        <button id="btn-token-duplicate" class="btn">⧉ Duplicate</button>
+        <button id="btn-token-delete" class="btn danger">🗑 Delete</button>
+      </div>
+    </div>
 
     <div id="drop-hint">
       <div class="drop-hint-inner">
