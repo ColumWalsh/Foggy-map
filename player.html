@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Foggy Map — Player view</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'&gt;&lt;text y='.9em' font-size='90'&gt;🌫️&lt;/text&gt;&lt;/svg&gt;">
+  <style>
+    /* Player page: view-only, so neutralize editor affordances */
+    #viewport { cursor: grab; }
+    #viewport.panning { cursor: grabbing; }
+    .token { pointer-events: none; }
+    #room-input {
+      width: 90px;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--panel-edge);
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+    #conn-status { font-size: 12px; }
+    #conn-status.ok { color: #2ecc71; }
+    #conn-status.bad { color: var(--danger); }
+    #waiting {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 4;
+    }
+  </style>
+  <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+</head>
+<body>
+  <header id="toolbar">
+    <div class="toolbar-group brand">
+      <span class="logo">🌫️</span>
+      <span class="title">Foggy&nbsp;Map — Player&nbsp;view</span>
+    </div>
+
+    <div class="toolbar-group">
+      <input id="room-input" placeholder="CODE" maxlength="6" autocomplete="off">
+      <button id="btn-join" class="btn">Join</button>
+    </div>
+
+    <div class="toolbar-group">
+      <button id="btn-zoom-out" class="btn" title="Zoom out">➖</button>
+      <button id="btn-zoom-fit" class="btn" title="Fit map to window">⛶ Fit</button>
+      <button id="btn-zoom-in" class="btn" title="Zoom in">➕</button>
+      <button id="btn-fullscreen" class="btn" title="Fullscreen">🖥️</button>
+    </div>
+
+    <div class="toolbar-group">
+      <span id="conn-status" class="muted">Not connected</span>
+    </div>
+  </header>
+
+  <main id="viewport">
+    <div id="stage">
+      <canvas id="map-canvas"></canvas>
+      <canvas id="grid-canvas"></canvas>
+      <canvas id="fog-canvas"></canvas>
+      <div id="token-layer"></div>
+    </div>
+
+    <div id="waiting">
+      <div class="drop-hint-inner">
+        <div class="drop-hint-icon">🌫️</div>
+        <h1 id="waiting-title">Join a game</h1>
+        <p id="waiting-text" class="muted">Enter the room code your GM gave
+        you, or open the link they shared.</p>
+      </div>
+    </div>
+  </main>
+
+  <script src="player.js"></script>
+</body>
+</html>

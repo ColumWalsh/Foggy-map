@@ -350,6 +350,19 @@ body {
   color: var(--danger);
 }
 
+.share-code {
+  font-size: 18px;
+  letter-spacing: 3px;
+  color: var(--accent);
+}
+
+#share-link {
+  flex: 1;
+  min-width: 0;
+}
+
+#share-error { color: var(--danger); }
+
 /* ---------- Drop hint (empty state) ---------- */
 
 #drop-hint {
