@@ -149,8 +149,13 @@
       el.style.setProperty("--token-color", t.color);
       el.style.borderWidth = `${Math.max(2, t.size * 0.06)}px`;
       el.title = t.label;
-      if (t.imageId && images[t.imageId]) {
-        el.style.backgroundImage = `url("${images[t.imageId]}")`;
+      const src = !t.imageId
+        ? null
+        : t.imageId.startsWith("builtin:")
+          ? "tokens/" + t.imageId.slice(8) // shipped with the site, same origin
+          : images[t.imageId] || null;
+      if (src) {
+        el.style.backgroundImage = `url("${src}")`;
       } else {
         const span = document.createElement("span");
         span.textContent = initials(t.label);
