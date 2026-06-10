@@ -46,10 +46,27 @@
   let room = "";
   let lastSeen = 0; // time of the last message from the GM
   let wakeLock = null;
+  let allowEdits = true;
+  let tokenDrag = null; // {id, startIx, startIy, origX, origY, moved}
+  let moveSendTimer = null;
+  let tokenRenderPending = false;
+
+  const PALETTE = [
+    "#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#1abc9c",
+    "#3498db", "#9b59b6", "#e84393", "#95a5a6", "#34495e",
+  ];
 
   // ---------- View transform ----------
   function applyTransform() {
     stage.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+  }
+
+  function screenToImage(clientX, clientY) {
+    const rect = viewport.getBoundingClientRect();
+    return {
+      ix: (clientX - rect.left - panX) / scale,
+      iy: (clientY - rect.top - panY) / scale,
+    };
   }
 
   function zoomAt(clientX, clientY, factor) {
@@ -112,17 +129,26 @@
   }
 
   function renderTokens() {
+    // Rebuilding mid-drag would destroy the captured element (GM updates
+    // stream in constantly); defer until the drag ends.
+    if (tokenDrag) {
+      tokenRenderPending = true;
+      return;
+    }
+    tokenRenderPending = false;
     tokenLayer.innerHTML = "";
     for (const t of tokens) {
       if (fogAlphaAt(t.x, t.y) > FOG_HIDE_ALPHA) continue; // hidden in fog
       const el = document.createElement("div");
       el.className = "token";
+      el.dataset.id = t.id;
       if (t.shape === "square") el.classList.add("square");
       el.style.left = `${t.x - t.size / 2}px`;
       el.style.top = `${t.y - t.size / 2}px`;
       el.style.width = el.style.height = `${t.size}px`;
       el.style.setProperty("--token-color", t.color);
       el.style.borderWidth = `${Math.max(2, t.size * 0.06)}px`;
+      el.title = t.label;
       if (t.imageId && images[t.imageId]) {
         el.style.backgroundImage = `url("${images[t.imageId]}")`;
       } else {
@@ -133,6 +159,13 @@
       }
       tokenLayer.appendChild(el);
     }
+  }
+
+  function positionTokenEl(t) {
+    const el = tokenLayer.querySelector(`[data-id="${t.id}"]`);
+    if (!el) return;
+    el.style.left = `${t.x - t.size / 2}px`;
+    el.style.top = `${t.y - t.size / 2}px`;
   }
 
   function stampBrush(ix, iy, mode, size, soft) {
@@ -209,12 +242,24 @@
       case "fog":
         loadFog(msg.data).then(renderTokens).catch(() => {});
         break;
-      case "scene":
+      case "scene": {
+        // Echo suppression: our own drag is optimistic, and the GM streams
+        // positions back; keep local coordinates for the token in hand.
+        const held = tokenDrag && tokens.find((t) => t.id === tokenDrag.id);
         grid = msg.grid;
         tokens = msg.tokens || [];
+        if (held) {
+          const t = tokens.find((tk) => tk.id === held.id);
+          if (t) {
+            t.x = held.x;
+            t.y = held.y;
+          }
+        }
+        if (msg.edits !== undefined) setEdits(msg.edits);
         drawGrid();
         renderTokens();
         break;
+      }
       case "image":
         images[msg.id] = msg.data;
         renderTokens();
@@ -223,9 +268,11 @@
   }
 
   function applySnapshot(msg) {
+    tokenDrag = null; // the whole scene may have changed under us
     grid = msg.grid;
     tokens = msg.tokens || [];
     images = msg.images || {};
+    if (msg.edits !== undefined) setEdits(msg.edits);
     if (!msg.map) {
       hasMap = false;
       showWaiting("Connected", "Waiting for the GM to load a map…");
@@ -361,6 +408,120 @@
       }
     }
     if (room && peer && !peer.disconnected && (!conn || !conn.open)) dial();
+  });
+
+  // ---------- Player token editing ----------
+  function setEdits(v) {
+    allowEdits = !!v;
+    document.body.classList.toggle("no-edits", !allowEdits);
+    document.getElementById("btn-add-token").hidden = !allowEdits;
+  }
+
+  function send(msg) {
+    if (conn && conn.open) conn.send(msg);
+  }
+
+  // Drag any visible token: move it locally (optimistic) and stream the
+  // position to the GM, who validates, snaps, and rebroadcasts.
+  tokenLayer.addEventListener("pointerdown", (e) => {
+    const el = e.target.closest(".token");
+    if (!el || e.button !== 0 || !allowEdits) return;
+    const t = tokens.find((tk) => tk.id === el.dataset.id);
+    if (!t) return;
+    e.stopPropagation(); // don't start a viewport pan
+    const p = screenToImage(e.clientX, e.clientY);
+    tokenDrag = { id: t.id, startIx: p.ix, startIy: p.iy, origX: t.x, origY: t.y, moved: false };
+    el.setPointerCapture(e.pointerId);
+  });
+
+  tokenLayer.addEventListener("pointermove", (e) => {
+    if (!tokenDrag) return;
+    const t = tokens.find((tk) => tk.id === tokenDrag.id);
+    if (!t) {
+      tokenDrag = null;
+      return;
+    }
+    const p = screenToImage(e.clientX, e.clientY);
+    if (!tokenDrag.moved) {
+      const d = Math.hypot(
+        (p.ix - tokenDrag.startIx) * scale,
+        (p.iy - tokenDrag.startIy) * scale
+      );
+      if (d < 4) return;
+      tokenDrag.moved = true;
+    }
+    t.x = tokenDrag.origX + (p.ix - tokenDrag.startIx);
+    t.y = tokenDrag.origY + (p.iy - tokenDrag.startIy);
+    positionTokenEl(t);
+    if (!moveSendTimer) {
+      moveSendTimer = setTimeout(() => {
+        moveSendTimer = null;
+        send({ t: "token-move", id: t.id, x: t.x, y: t.y, final: false });
+      }, 100);
+    }
+  });
+
+  function endTokenDrag() {
+    if (!tokenDrag) return;
+    const t = tokens.find((tk) => tk.id === tokenDrag.id);
+    const moved = tokenDrag.moved;
+    tokenDrag = null;
+    clearTimeout(moveSendTimer);
+    moveSendTimer = null;
+    if (moved && t) send({ t: "token-move", id: t.id, x: t.x, y: t.y, final: true });
+    if (tokenRenderPending) renderTokens();
+  }
+
+  tokenLayer.addEventListener("pointerup", endTokenDrag);
+  tokenLayer.addEventListener("pointercancel", endTokenDrag);
+
+  // Upload an image and add it as a token at the center of the current view.
+  const tokenFileInput = document.getElementById("token-file");
+
+  document.getElementById("btn-add-token").addEventListener("click", () => {
+    if (hasMap && allowEdits) tokenFileInput.click();
+  });
+
+  tokenFileInput.addEventListener("change", () => {
+    const file = tokenFileInput.files[0];
+    tokenFileInput.value = "";
+    if (!file || !file.type.startsWith("image/") || !hasMap) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        // Downscale before sending, same as the GM's import pipeline
+        const k = Math.min(1, 256 / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(img.naturalWidth * k));
+        c.height = Math.max(1, Math.round(img.naturalHeight * k));
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        const keepAlpha = file.type === "image/png" || file.type === "image/webp";
+        const data = keepAlpha
+          ? c.toDataURL("image/png")
+          : c.toDataURL("image/jpeg", 0.85);
+        const rand = Math.random().toString(36).slice(2, 8);
+        const center = screenToImage(
+          viewport.getBoundingClientRect().left + viewport.clientWidth / 2,
+          viewport.getBoundingClientRect().top + viewport.clientHeight / 2
+        );
+        send({
+          t: "token-add",
+          token: {
+            id: `p-${Date.now().toString(36)}-${rand}`,
+            x: center.ix,
+            y: center.iy,
+            size: grid && grid.enabled ? grid.cellSize : Math.max(24, mapCanvas.width / 20),
+            color: PALETTE[Math.floor(Math.random() * PALETTE.length)],
+            label: file.name.replace(/\.[^.]+$/, "").slice(0, 24) || "Player",
+            shape: "circle",
+          },
+          image: { id: `pimg-${Date.now().toString(36)}-${rand}`, data },
+        });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
   });
 
   // ---------- Pan & zoom ----------

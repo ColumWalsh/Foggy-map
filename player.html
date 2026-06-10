@@ -7,10 +7,10 @@
   <link rel="stylesheet" href="style.css">
   <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'&gt;&lt;text y='.9em' font-size='90'&gt;🌫️&lt;/text&gt;&lt;/svg&gt;">
   <style>
-    /* Player page: view-only, so neutralize editor affordances */
     #viewport { cursor: grab; }
     #viewport.panning { cursor: grabbing; }
-    .token { pointer-events: none; }
+    /* Token interaction is governed by the GM's "players can edit" toggle */
+    body.no-edits .token { pointer-events: none; }
     #room-input {
       width: 90px;
       background: var(--bg);
@@ -47,6 +47,12 @@
     <div class="toolbar-group">
       <input id="room-input" placeholder="CODE" maxlength="6" autocomplete="off">
       <button id="btn-join" class="btn">Join</button>
+    </div>
+
+    <div class="toolbar-group">
+      <button id="btn-add-token" class="btn" hidden
+              title="Add your own token from an image">➕ Token</button>
+      <input type="file" id="token-file" accept="image/*" hidden>
     </div>
 
     <div class="toolbar-group">

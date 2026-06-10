@@ -460,7 +460,16 @@
     return tokens.find((t) => t.id === selectedTokenId) || null;
   }
 
+  let tokenRenderPending = false;
+
   function renderTokens() {
+    // Rebuilding the layer mid-drag would destroy the captured element
+    // (a player message can land while the GM is dragging); defer it.
+    if (tokenDrag) {
+      tokenRenderPending = true;
+      return;
+    }
+    tokenRenderPending = false;
     tokenLayer.innerHTML = "";
     for (const t of tokens) {
       const el = document.createElement("div");
@@ -678,6 +687,7 @@
     }
     tokenDrag = null;
     clearOverlay();
+    if (tokenRenderPending) renderTokens();
   }
 
   tokenLayer.addEventListener("pointerup", endTokenDrag);
@@ -809,13 +819,18 @@
   // ---------- Live share (PeerJS) ----------
   // The GM hosts a room (peer id "foggymap-<CODE>"); player.html connects
   // and receives a full snapshot, then streamed updates:
-  //   snapshot {map, fog, grid, tokens, images}  on join / map change
-  //   stamps   {mode, size, soft, pts}           batched brush stamps
-  //   rect     {mode, x, y, w, h}                rectangle fog ops
-  //   fill     {mode}                            cover all / reveal all
-  //   fog      {data}                            full fog image (undo/redo)
-  //   scene    {grid, tokens}                    grid + token state
-  //   image    {id, data}                        new token image
+  //   snapshot {map, fog, grid, tokens, images, edits}  on join / map change
+  //   stamps   {mode, size, soft, pts}                  batched brush stamps
+  //   rect     {mode, x, y, w, h}                       rectangle fog ops
+  //   fill     {mode}                                   cover all / reveal all
+  //   fog      {data}                                   full fog image (undo/redo)
+  //   scene    {grid, tokens, edits}                    grid + token state
+  //   image    {id, data}                               new token image
+  // Players send back (applied by the GM, who stays authoritative, then
+  // rebroadcast via the scene sync):
+  //   pong                                              keepalive reply
+  //   token-move {id, x, y, final}                      drag a token
+  //   token-add  {token, image?}                        create a token
   const PEERJS_SRC = "https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js";
   const PEER_ID_PREFIX = "foggymap-";
   // No ambiguous characters (0/O, 1/I/L) in room codes
@@ -831,6 +846,7 @@
   let pingTimer = null;
   let reconnectTimer = null;
   let wakeLock = null;
+  let allowPlayerEdits = true;
 
   function sharing() {
     return peer !== null;
@@ -895,6 +911,7 @@
             conn.send(snapshotMsg());
             updateShareUI();
           });
+          conn.on("data", (msg) => handleViewerMessage(msg));
           conn.on("close", () => {
             viewers = viewers.filter((c) => c !== conn);
             updateShareUI();
@@ -908,6 +925,56 @@
         updateShareUI();
       })
       .catch(() => setShareError("Could not load PeerJS — are you online?"));
+  }
+
+  // Player actions arrive as requests; the GM validates and applies them,
+  // and the regular scene sync rebroadcasts the result to everyone.
+  function handleViewerMessage(msg) {
+    if (!msg || typeof msg !== "object" || msg.t === "pong") return;
+    if (!allowPlayerEdits || !state.hasMap) return;
+
+    if (msg.t === "token-move") {
+      const t = tokens.find((tk) => tk.id === msg.id);
+      if (!t || !Number.isFinite(msg.x) || !Number.isFinite(msg.y)) return;
+      t.x = Math.min(Math.max(msg.x, 0), mapCanvas.width);
+      t.y = Math.min(Math.max(msg.y, 0), mapCanvas.height);
+      if (msg.final) {
+        snapToken(t);
+        updateTokenFogVisibility();
+      }
+      positionTokenEl(t);
+      scheduleAutosave(); // also schedules the scene rebroadcast
+    } else if (msg.t === "token-add") {
+      const tk = msg.token;
+      if (!tk || typeof tk !== "object") return;
+      let imageId = null;
+      if (
+        msg.image &&
+        typeof msg.image.id === "string" &&
+        typeof msg.image.data === "string" &&
+        msg.image.data.startsWith("data:image/") &&
+        msg.image.data.length < 500000 // players downscale; reject anomalies
+      ) {
+        imageId = msg.image.id;
+        images[imageId] = msg.image.data;
+        ensureImageCache();
+        broadcast({ t: "image", id: imageId, data: msg.image.data });
+      }
+      pushUndo("tokens"); // lets the GM undo a player's addition
+      tokens.push({
+        id: typeof tk.id === "string" ? tk.id.slice(0, 40) : newId("t"),
+        x: Math.min(Math.max(Number(tk.x) || 0, 0), mapCanvas.width),
+        y: Math.min(Math.max(Number(tk.y) || 0, 0), mapCanvas.height),
+        size: Math.min(Math.max(Number(tk.size) || 50, 10), 400),
+        color: /^#[0-9a-f]{6}$/i.test(tk.color) ? tk.color : PALETTE[0],
+        label: String(tk.label || "Player").slice(0, 24),
+        shape: tk.shape === "square" ? "square" : "circle",
+        imageId,
+      });
+      renderTokens();
+      updateTokenFogVisibility();
+      scheduleAutosave();
+    }
   }
 
   function reconnectSignaling() {
@@ -970,6 +1037,7 @@
       grid,
       tokens,
       images,
+      edits: allowPlayerEdits,
     };
   }
 
@@ -1015,7 +1083,7 @@
     if (!sharing() || !viewers.length || shareSyncTimer) return;
     shareSyncTimer = setTimeout(() => {
       shareSyncTimer = null;
-      broadcast({ t: "scene", grid, tokens });
+      broadcast({ t: "scene", grid, tokens, edits: allowPlayerEdits });
     }, 120);
   }
 
@@ -1466,6 +1534,11 @@
 
   document.getElementById("btn-share-start").addEventListener("click", startSharing);
   document.getElementById("btn-share-stop").addEventListener("click", stopSharing);
+
+  document.getElementById("share-edits").addEventListener("change", (e) => {
+    allowPlayerEdits = e.target.checked;
+    broadcast({ t: "scene", grid, tokens, edits: allowPlayerEdits });
+  });
 
   document.getElementById("btn-copy-link").addEventListener("click", () => {
     shareLinkInput.select();
