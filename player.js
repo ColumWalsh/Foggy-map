@@ -44,6 +44,8 @@
   let conn = null;
   let retryTimer = null;
   let room = "";
+  let lastSeen = 0; // time of the last message from the GM
+  let wakeLock = null;
 
   // ---------- View transform ----------
   function applyTransform() {
@@ -169,7 +171,13 @@
   // ---------- Message handling ----------
   function onMessage(msg) {
     if (!msg || typeof msg !== "object") return;
+    lastSeen = Date.now();
     switch (msg.t) {
+      case "ping":
+        // Answer the GM's keepalive so traffic flows both ways and idle
+        // NAT mappings stay open.
+        if (conn && conn.open) conn.send({ t: "pong" });
+        break;
       case "snapshot":
         applySnapshot(msg);
         break;
@@ -274,6 +282,17 @@
     }
     peer = new Peer();
     peer.on("open", dial);
+    // Re-register with the signaling server if its socket drops; without
+    // this, recovering from a GM restart is impossible.
+    peer.on("disconnected", () => {
+      if (peer && !peer.destroyed) {
+        try {
+          peer.reconnect();
+        } catch {
+          /* already reconnecting */
+        }
+      }
+    });
     peer.on("error", (err) => {
       if (err.type === "peer-unavailable") {
         setStatus(`Room ${room} not found — is the GM sharing?`, "bad");
@@ -289,7 +308,9 @@
     conn = peer.connect(PEER_ID_PREFIX + room, { reliable: true });
     conn.on("open", () => {
       clearTimeout(retryTimer);
+      lastSeen = Date.now();
       setStatus(`Connected · room ${room}`, "ok");
+      acquireWakeLock();
     });
     conn.on("data", onMessage);
     conn.on("close", () => {
@@ -305,6 +326,42 @@
       if (!conn || !conn.open) dial();
     }, RETRY_MS);
   }
+
+  // Watchdog: the GM pings every 10s, so silence means the channel died
+  // without firing "close" (typical of expired NAT mappings). Force a
+  // reconnect cycle.
+  setInterval(() => {
+    if (conn && conn.open && lastSeen && Date.now() - lastSeen > 30000) {
+      setStatus("Connection stale — reconnecting…", "bad");
+      conn.close();
+      scheduleRetry();
+    }
+  }, 5000);
+
+  // Keep the screen awake while watching — this page is meant to sit on a
+  // TV or tablet for a whole session.
+  function acquireWakeLock() {
+    if (!navigator.wakeLock) return;
+    navigator.wakeLock
+      .request("screen")
+      .then((lock) => {
+        wakeLock = lock;
+      })
+      .catch(() => {});
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    if (conn && conn.open) acquireWakeLock(); // released when tab was hidden
+    if (peer && peer.disconnected && !peer.destroyed) {
+      try {
+        peer.reconnect();
+      } catch {
+        /* already reconnecting */
+      }
+    }
+    if (room && peer && !peer.disconnected && (!conn || !conn.open)) dial();
+  });
 
   // ---------- Pan & zoom ----------
   let panning = false;

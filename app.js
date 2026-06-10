@@ -828,6 +828,9 @@
   let stampBatch = null;
   let stampTimer = null;
   let shareSyncTimer = null;
+  let pingTimer = null;
+  let reconnectTimer = null;
+  let wakeLock = null;
 
   function sharing() {
     return peer !== null;
@@ -864,7 +867,18 @@
       .then(() => {
         shareCode = randomCode();
         peer = new Peer(PEER_ID_PREFIX + shareCode);
-        peer.on("open", updateShareUI);
+        peer.on("open", () => {
+          setShareError("");
+          updateShareUI();
+        });
+        // PeerJS does not reconnect to its signaling server by itself; if
+        // the socket drops, the room silently stops being joinable. Keep
+        // re-registering under the same code.
+        peer.on("disconnected", () => {
+          if (!sharing()) return;
+          setShareError("Signaling lost — reconnecting…");
+          reconnectSignaling();
+        });
         peer.on("error", (err) => {
           if (err.type === "unavailable-id" && sharing()) {
             // Code collision: retry with a fresh one
@@ -886,9 +900,27 @@
             updateShareUI();
           });
         });
+        // Keepalive: without traffic, idle NAT mappings expire after
+        // ~30-60s and the data channel dies silently.
+        clearInterval(pingTimer);
+        pingTimer = setInterval(() => broadcast({ t: "ping" }), 10000);
+        acquireWakeLock();
         updateShareUI();
       })
       .catch(() => setShareError("Could not load PeerJS — are you online?"));
+  }
+
+  function reconnectSignaling() {
+    if (!peer || peer.destroyed) return;
+    try {
+      peer.reconnect();
+    } catch {
+      /* already reconnecting */
+    }
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => {
+      if (peer && peer.disconnected && !peer.destroyed) reconnectSignaling();
+    }, 3000);
   }
 
   function stopSharing() {
@@ -897,9 +929,31 @@
     viewers = [];
     shareCode = null;
     clearTimeout(stampTimer);
+    clearTimeout(reconnectTimer);
+    clearInterval(pingTimer);
     stampBatch = null;
+    wakeLock?.release().catch(() => {});
+    wakeLock = null;
     updateShareUI();
   }
+
+  // Keep the screen awake while sharing — a locked phone kills both the
+  // signaling socket and the data channels.
+  function acquireWakeLock() {
+    if (!navigator.wakeLock || !sharing()) return;
+    navigator.wakeLock
+      .request("screen")
+      .then((lock) => {
+        wakeLock = lock;
+      })
+      .catch(() => {});
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !sharing()) return;
+    acquireWakeLock(); // wake locks are released when the tab is hidden
+    if (peer && peer.disconnected && !peer.destroyed) reconnectSignaling();
+  });
 
   function broadcast(msg) {
     for (const conn of viewers) {
