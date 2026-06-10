@@ -1137,7 +1137,17 @@
   });
 
   document.getElementById("btn-grid-settings").addEventListener("click", () => {
-    gridPanel.hidden = !gridPanel.hidden;
+    const opening = gridPanel.hidden;
+    if (opening && selectedTokenId) selectToken(null); // one panel at a time
+    gridPanel.hidden = !opening;
+  });
+
+  document.getElementById("btn-grid-close").addEventListener("click", () => {
+    gridPanel.hidden = true;
+  });
+
+  document.getElementById("btn-token-close").addEventListener("click", () => {
+    selectToken(null);
   });
 
   calibrateBtn.addEventListener("click", () => {

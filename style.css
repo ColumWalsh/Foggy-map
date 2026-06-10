@@ -236,6 +236,12 @@ body {
   top: 10px;
   right: 10px;
   width: 252px;
+  max-width: calc(100% - 20px);
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
+  /* The viewport disables touch gestures for drawing; re-enable them here
+     so the panel can be touch-scrolled on phones. */
+  touch-action: auto;
   padding: 12px 14px;
   background: var(--panel);
   border: 1px solid var(--panel-edge);
@@ -246,12 +252,27 @@ body {
 }
 
 .panel h3 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin: 0 0 10px;
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.6px;
   color: var(--text-muted);
 }
+
+.panel-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.panel-close:hover { color: var(--text); }
 
 .panel-row {
   display: flex;
