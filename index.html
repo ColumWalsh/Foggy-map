@@ -26,6 +26,7 @@
       <button class="btn tool" data-tool="hide-rect" title="Hide rectangle (T)">▩ Hide&nbsp;rect</button>
       <button class="btn tool" data-tool="pan" title="Pan (P, or hold Space / middle mouse)">✋ Pan</button>
       <button class="btn tool" data-tool="measure" title="Measure distance (M)">📏</button>
+      <button class="btn tool" data-tool="aoe" title="Area of effect markers (A)">💥 AoE</button>
     </div>
 
     <div class="toolbar-group">
@@ -80,6 +81,7 @@
     <div id="stage">
       <canvas id="map-canvas"></canvas>
       <canvas id="grid-canvas"></canvas>
+      <svg id="aoe-layer" xmlns="http://www.w3.org/2000/svg"></svg>
       <canvas id="fog-canvas"></canvas>
       <div id="token-layer"></div>
     </div>
@@ -169,6 +171,28 @@
       <p class="muted">Peer-to-peer via WebRTC: anyone with the code can
       watch while sharing is on. Both devices must stay online.</p>
       <p id="share-error" class="muted" hidden></p>
+    </div>
+
+    <div id="aoe-panel" class="panel" hidden>
+      <h3>AoE markers
+        <button id="btn-aoe-close" class="panel-close" title="Close">✕</button></h3>
+      <div class="panel-row" id="aoe-shapes">
+        <button class="btn aoe-shape-btn" data-shape="circle" title="Circle / sphere">⬤</button>
+        <button class="btn aoe-shape-btn" data-shape="cone" title="Cone (D&amp;D style: width = length)">◢</button>
+        <button class="btn aoe-shape-btn" data-shape="square" title="Square / cube">◼</button>
+        <button class="btn aoe-shape-btn" data-shape="line" title="Line (one grid cell wide)">▬</button>
+      </div>
+      <div id="aoe-colors" class="swatches"></div>
+      <div class="panel-row">
+        <label class="inline">Opacity
+          <input type="range" id="aoe-opacity" min="10" max="80" value="35"></label>
+      </div>
+      <p class="muted">Drag on the map to place a marker (drag direction aims
+      cones, squares, and lines). Drag a marker to move it; click selects;
+      Delete or double-click removes; Esc deselects.</p>
+      <div class="panel-row">
+        <button id="btn-aoe-clear" class="btn danger">🧹 Clear all markers</button>
+      </div>
     </div>
 
     <div id="token-panel" class="panel" hidden>

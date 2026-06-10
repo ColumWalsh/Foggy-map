@@ -39,6 +39,11 @@
   let grid = null;
   let tokens = [];
   let images = {};
+  let aoes = [];
+
+  const aoeLayer = document.getElementById("aoe-layer");
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const CONE_HALF_ANGLE = (53.13 / 2) * (Math.PI / 180);
 
   let peer = null;
   let conn = null;
@@ -173,6 +178,59 @@
     el.style.top = `${t.y - t.size / 2}px`;
   }
 
+  // AoE markers, mirroring the GM renderer (view-only)
+  function aoePathFor(a) {
+    const r2 = (n) => Math.round(n * 100) / 100;
+    const { x, y, size: s, angle: ang } = a;
+    if (a.shape === "circle") {
+      return (
+        `M ${r2(x - s)} ${r2(y)} ` +
+        `a ${r2(s)} ${r2(s)} 0 1 0 ${r2(2 * s)} 0 ` +
+        `a ${r2(s)} ${r2(s)} 0 1 0 ${r2(-2 * s)} 0 Z`
+      );
+    }
+    if (a.shape === "cone") {
+      const a1 = ang - CONE_HALF_ANGLE;
+      const a2 = ang + CONE_HALF_ANGLE;
+      return (
+        `M ${r2(x)} ${r2(y)} ` +
+        `L ${r2(x + s * Math.cos(a1))} ${r2(y + s * Math.sin(a1))} ` +
+        `A ${r2(s)} ${r2(s)} 0 0 1 ` +
+        `${r2(x + s * Math.cos(a2))} ${r2(y + s * Math.sin(a2))} Z`
+      );
+    }
+    const half =
+      a.shape === "square"
+        ? s / 2
+        : Math.max(6, grid && grid.enabled ? grid.cellSize / 2 : s * 0.08);
+    const dx = Math.cos(ang);
+    const dy = Math.sin(ang);
+    const px = -dy;
+    const py = dx;
+    const corners = [
+      [x + px * half, y + py * half],
+      [x - px * half, y - py * half],
+      [x - px * half + dx * s, y - py * half + dy * s],
+      [x + px * half + dx * s, y + py * half + dy * s],
+    ];
+    return "M " + corners.map(([cx, cy]) => `${r2(cx)} ${r2(cy)}`).join(" L ") + " Z";
+  }
+
+  function renderAoes() {
+    aoeLayer.innerHTML = "";
+    for (const a of aoes) {
+      if (!a || a.size < 1) continue;
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", aoePathFor(a));
+      path.setAttribute("fill", a.color);
+      path.setAttribute("fill-opacity", a.opacity);
+      path.setAttribute("stroke", a.color);
+      path.setAttribute("stroke-opacity", 0.85);
+      path.setAttribute("stroke-width", 3);
+      aoeLayer.appendChild(path);
+    }
+  }
+
   function stampBrush(ix, iy, mode, size, soft) {
     const r = size / 2;
     const inner = r * (1 - soft);
@@ -253,6 +311,7 @@
         const held = tokenDrag && tokens.find((t) => t.id === tokenDrag.id);
         grid = msg.grid;
         tokens = msg.tokens || [];
+        aoes = msg.aoes || [];
         if (held) {
           const t = tokens.find((tk) => tk.id === held.id);
           if (t) {
@@ -262,6 +321,7 @@
         }
         if (msg.edits !== undefined) setEdits(msg.edits);
         drawGrid();
+        renderAoes();
         renderTokens();
         break;
       }
@@ -277,6 +337,7 @@
     grid = msg.grid;
     tokens = msg.tokens || [];
     images = msg.images || {};
+    aoes = msg.aoes || [];
     if (msg.edits !== undefined) setEdits(msg.edits);
     if (!msg.map) {
       hasMap = false;
@@ -289,10 +350,14 @@
       mapCanvas.height = gridCanvas.height = fogCanvas.height = img.naturalHeight;
       tokenLayer.style.width = `${img.naturalWidth}px`;
       tokenLayer.style.height = `${img.naturalHeight}px`;
+      aoeLayer.setAttribute("width", img.naturalWidth);
+      aoeLayer.setAttribute("height", img.naturalHeight);
+      aoeLayer.setAttribute("viewBox", `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
       mapCtx.drawImage(img, 0, 0);
       hasMap = true;
       waiting.hidden = true;
       drawGrid();
+      renderAoes();
       const fogReady = msg.fog
         ? loadFog(msg.fog)
         : Promise.resolve(onMessage({ t: "fill", mode: "hide" }));
