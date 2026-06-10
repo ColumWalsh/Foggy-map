@@ -1,0 +1,37 @@
+name: Update token manifest
+
+# Regenerates tokens/manifest.json whenever token images are added,
+# renamed, or removed, and commits the result back to main.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tokens/**"
+      - "!tokens/manifest.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate manifest
+        run: |
+          cd tokens
+          find . -maxdepth 1 -type f \
+            \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \
+               -o -iname '*.webp' -o -iname '*.gif' -o -iname '*.svg' \) \
+            -printf '%f\n' | sort | jq -R . | jq -s . > manifest.json
+          cat manifest.json
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tokens/manifest.json
+          git diff --cached --quiet || {
+            git commit -m "Update token manifest"
+            git push
+          }

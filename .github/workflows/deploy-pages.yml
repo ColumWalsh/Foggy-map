@@ -22,6 +22,17 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # Keep the deployed manifest in sync with the actual token files,
+      # regardless of whether the committed manifest is up to date (the
+      # token-manifest workflow's bot commit doesn't retrigger this one).
+      - name: Generate token manifest
+        run: |
+          mkdir -p tokens
+          cd tokens
+          find . -maxdepth 1 -type f \
+            \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \
+               -o -iname '*.webp' -o -iname '*.gif' -o -iname '*.svg' \) \
+            -printf '%f\n' | sort | jq -R . | jq -s . > manifest.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -43,6 +43,14 @@ python3 -m http.server 8000
   library (images are downscaled on import so storage stays small). Tokens
   drag with any tool active, optionally snap to grid cells, and show a live
   distance readout while dragging. Double-click a token to open its editor.
+- **Built-in token sets** — images committed to the repo's `tokens/` folder
+  appear in every token editor's library automatically, on every device.
+  They're referenced by name rather than stored in browser storage, so they
+  cost nothing against the autosave quota, and live-share viewers load them
+  straight from the site. To add your own: drop image files into `tokens/`
+  and push — a GitHub Action regenerates `tokens/manifest.json`, and the
+  Pages deploy always rebuilds it fresh. Only commit images you have the
+  right to redistribute.
 - **Undo / redo** (Ctrl+Z / Ctrl+Y) covering both fog edits and token
   changes, plus one-click Cover all / Reveal all.
 - **Autosave** — map, fog, grid, and tokens are saved to the browser's

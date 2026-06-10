@@ -482,8 +482,9 @@
       el.style.setProperty("--token-color", t.color);
       el.style.borderWidth = `${Math.max(2, t.size * 0.06)}px`;
       el.title = `${t.label} — double-click to edit`;
-      if (t.imageId && images[t.imageId]) {
-        el.style.backgroundImage = `url("${images[t.imageId]}")`;
+      const src = tokenImageSrc(t.imageId);
+      if (src) {
+        el.style.backgroundImage = `url("${src}")`;
       } else {
         const span = document.createElement("span");
         span.textContent = initials(t.label);
@@ -548,17 +549,23 @@
     }
 
     imageLibraryDiv.innerHTML = "";
-    for (const [id, dataUrl] of Object.entries(images)) {
+    const addThumb = (id, src, title) => {
       const im = document.createElement("img");
       im.className = "lib-thumb" + (id === t.imageId ? " active" : "");
-      im.src = dataUrl;
-      im.title = "Use this image";
+      im.src = src;
+      im.title = title;
       im.addEventListener("click", () => {
         pushUndo("tokens");
         t.imageId = id;
         tokenChanged();
       });
       imageLibraryDiv.appendChild(im);
+    };
+    for (const f of builtinTokens) {
+      addThumb("builtin:" + f, "tokens/" + f, f.replace(/\.[^.]+$/, ""));
+    }
+    for (const [id, dataUrl] of Object.entries(images)) {
+      addThumb(id, dataUrl, "Session image");
     }
   }
 
@@ -694,6 +701,35 @@
   tokenLayer.addEventListener("pointercancel", endTokenDrag);
 
   // ---------- Token image library ----------
+  // Two kinds of token images:
+  //  - session uploads: downscaled dataURLs in `images`, persisted in saves
+  //  - built-ins: files committed to tokens/ in the repo, referenced as
+  //    "builtin:<file>" and resolved to a same-origin URL — they cost
+  //    nothing in localStorage and ship with the site on every device.
+  let builtinTokens = []; // filenames from tokens/manifest.json
+
+  function tokenImageSrc(imageId) {
+    if (!imageId) return null;
+    if (imageId.startsWith("builtin:")) return "tokens/" + imageId.slice(8);
+    return images[imageId] || null;
+  }
+
+  function loadBuiltinTokens() {
+    fetch("tokens/manifest.json")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => {
+        if (!Array.isArray(list)) return;
+        builtinTokens = list.filter((f) => typeof f === "string");
+        for (const f of builtinTokens) {
+          const img = new Image();
+          img.src = "tokens/" + f; // pre-decode for PNG export
+          imageCache["builtin:" + f] = img;
+        }
+        updateTokenPanel();
+      })
+      .catch(() => {}); // e.g. file:// — built-ins simply don't appear
+  }
+
   // Imported images are downscaled before storage: tokens render small, and
   // full-size photos would blow the localStorage autosave budget.
   const TOKEN_IMG_SIZE = 256;
@@ -1753,5 +1789,6 @@
   updateFogOpacity();
   updateUndoButtons();
   syncGridUI();
+  loadBuiltinTokens();
   tryRestoreSession();
 })();
