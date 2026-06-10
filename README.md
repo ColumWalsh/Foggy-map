@@ -53,6 +53,15 @@ python3 -m http.server 8000
   Files from older versions still load.
 - **Export PNG** of the player view (map with grid, opaque fog, and tokens
   baked in).
+- **Live share (📡)** — stream a view-only player view to another browser on
+  another machine (a TV, a tablet, a player's laptop). Click 📡 Share →
+  Start sharing to get a room code and link; players open `player.html`
+  with that link/code and see the player perspective live: opaque fog,
+  brush reveals as they happen, token moves, and tokens hidden inside fog.
+  The connection is peer-to-peer over WebRTC (via [PeerJS](https://peerjs.com)
+  and its free public signaling server) — no backend, no accounts; both
+  devices just need to stay online while sharing. Anyone with the room code
+  can watch, so treat the link like an invite.
 
 ## Keyboard shortcuts
 

@@ -59,6 +59,7 @@
         <input type="range" id="fog-opacity" min="20" max="100" value="65">
       </label>
       <button id="btn-player-view" class="btn toggle" title="Toggle player view: fog becomes fully opaque (V)">🎭 Player view</button>
+      <button id="btn-share" class="btn" title="Share a live player view with another device">📡 Share</button>
     </div>
 
     <div class="toolbar-group">
@@ -133,6 +134,36 @@
         <label class="inline">
           <input type="checkbox" id="grid-snap"> Snap tokens to grid</label>
       </div>
+    </div>
+
+    <div id="share-panel" class="panel" hidden>
+      <h3>Live share
+        <button id="btn-share-close" class="panel-close" title="Close">✕</button></h3>
+      <div id="share-off">
+        <p class="muted">Stream a live, view-only player view to another
+        browser — another machine, a TV, a tablet. Players see the opaque
+        fog and only the tokens outside it.</p>
+        <button id="btn-share-start" class="btn">📡 Start sharing</button>
+      </div>
+      <div id="share-on" hidden>
+        <div class="panel-row">Room code:
+          <strong id="share-code" class="share-code"></strong></div>
+        <div class="panel-row">
+          <input type="text" id="share-link" readonly>
+          <button id="btn-copy-link" class="btn">Copy</button>
+        </div>
+        <p class="muted">Open this link on the player's device (or go to
+        player.html and enter the code).</p>
+        <div class="panel-row">
+          <span id="share-viewers" class="muted">0 viewers connected</span>
+        </div>
+        <div class="panel-row">
+          <button id="btn-share-stop" class="btn danger">⏹ Stop sharing</button>
+        </div>
+      </div>
+      <p class="muted">Peer-to-peer via WebRTC: anyone with the code can
+      watch while sharing is on. Both devices must stay online.</p>
+      <p id="share-error" class="muted" hidden></p>
     </div>
 
     <div id="token-panel" class="panel" hidden>

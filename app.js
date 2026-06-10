@@ -71,6 +71,14 @@
   const tokenImageInput = document.getElementById("token-image-input");
   const imageLibraryDiv = document.getElementById("image-library");
 
+  const sharePanel = document.getElementById("share-panel");
+  const shareOffDiv = document.getElementById("share-off");
+  const shareOnDiv = document.getElementById("share-on");
+  const shareCodeEl = document.getElementById("share-code");
+  const shareLinkInput = document.getElementById("share-link");
+  const shareViewersEl = document.getElementById("share-viewers");
+  const shareErrorEl = document.getElementById("share-error");
+
   // ---------- State ----------
   const state = {
     hasMap: false,
@@ -200,13 +208,14 @@
       syncGridUI();
       drawGrid();
 
-      if (session?.fog) {
-        restoreFog(session.fog).catch(() => coverAll(false));
-      } else {
-        coverAll(false);
-      }
-      fitToWindow();
-      scheduleAutosave();
+      const fogReady = session?.fog
+        ? restoreFog(session.fog).catch(() => coverAll(false))
+        : Promise.resolve(coverAll(false));
+      fogReady.then(() => {
+        fitToWindow();
+        scheduleAutosave();
+        broadcastSnapshot(); // viewers get the new map + fog in one message
+      });
     };
     img.onerror = () => setStatus("⚠️ Could not read that image file.");
     img.src = dataUrl;
@@ -229,6 +238,7 @@
     fogCtx.globalCompositeOperation = "source-over";
     fogCtx.fillStyle = FOG_COLOR;
     fogCtx.fillRect(0, 0, fogCanvas.width, fogCanvas.height);
+    broadcast({ t: "fill", mode: "hide" });
     fogChanged();
   }
 
@@ -236,6 +246,7 @@
     if (!state.hasMap) return;
     pushUndo("fog");
     fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
+    broadcast({ t: "fill", mode: "reveal" });
     fogChanged();
   }
 
@@ -256,6 +267,7 @@
     fogCtx.beginPath();
     fogCtx.arc(ix, iy, r, 0, Math.PI * 2);
     fogCtx.fill();
+    queueStamp(ix, iy, mode);
   }
 
   function strokeTo(ix, iy, mode) {
@@ -289,6 +301,7 @@
       fogCtx.fillStyle = FOG_COLOR;
     }
     fogCtx.fillRect(x, y, w, h);
+    broadcast({ t: "rect", mode, x, y, w, h });
     fogChanged();
   }
 
@@ -506,6 +519,7 @@
     tokenPanel.hidden = !t || !tokenPanelOpen;
     if (tokenPanel.hidden) return;
     gridPanel.hidden = true;
+    sharePanel.hidden = true;
     tokenLabelInput.value = t.label;
     tokenSizeInput.value = t.size;
     tokenShapeInput.value = t.shape;
@@ -636,6 +650,7 @@
     t.x = tokenDrag.origX + (p.ix - tokenDrag.startIx);
     t.y = tokenDrag.origY + (p.iy - tokenDrag.startIy);
     positionTokenEl(t);
+    scheduleShareSync(); // viewers see the token move live
     // Live movement readout from the drag origin, same as the measure tool.
     drawMeasureLine(
       { ix: tokenDrag.origX, iy: tokenDrag.origY },
@@ -699,6 +714,7 @@
             ? c.toDataURL("image/png")
             : c.toDataURL("image/jpeg", 0.85);
           ensureImageCache();
+          broadcast({ t: "image", id, data: images[id] });
           resolve(id);
         };
         img.onerror = reject;
@@ -743,7 +759,10 @@
 
   function applySnapshot(entry) {
     if (entry.type === "fog") {
-      restoreFog(entry.data).then(fogChanged);
+      restoreFog(entry.data).then(() => {
+        broadcast({ t: "fog", data: entry.data });
+        fogChanged();
+      });
     } else {
       tokens = JSON.parse(entry.data);
       renderTokens();
@@ -787,10 +806,187 @@
     redoBtn.disabled = redoStack.length === 0;
   }
 
+  // ---------- Live share (PeerJS) ----------
+  // The GM hosts a room (peer id "foggymap-<CODE>"); player.html connects
+  // and receives a full snapshot, then streamed updates:
+  //   snapshot {map, fog, grid, tokens, images}  on join / map change
+  //   stamps   {mode, size, soft, pts}           batched brush stamps
+  //   rect     {mode, x, y, w, h}                rectangle fog ops
+  //   fill     {mode}                            cover all / reveal all
+  //   fog      {data}                            full fog image (undo/redo)
+  //   scene    {grid, tokens}                    grid + token state
+  //   image    {id, data}                        new token image
+  const PEERJS_SRC = "https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js";
+  const PEER_ID_PREFIX = "foggymap-";
+  // No ambiguous characters (0/O, 1/I/L) in room codes
+  const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+  let peer = null;
+  let viewers = [];
+  let shareCode = null;
+  let peerJsPromise = null;
+  let stampBatch = null;
+  let stampTimer = null;
+  let shareSyncTimer = null;
+
+  function sharing() {
+    return peer !== null;
+  }
+
+  function loadPeerJs() {
+    if (typeof Peer !== "undefined") return Promise.resolve();
+    if (!peerJsPromise) {
+      peerJsPromise = new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = PEERJS_SRC;
+        s.onload = resolve;
+        s.onerror = () => {
+          peerJsPromise = null;
+          reject(new Error("failed to load PeerJS"));
+        };
+        document.head.appendChild(s);
+      });
+    }
+    return peerJsPromise;
+  }
+
+  function randomCode() {
+    let code = "";
+    for (let i = 0; i < 6; i++) {
+      code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+    }
+    return code;
+  }
+
+  function startSharing() {
+    setShareError("");
+    loadPeerJs()
+      .then(() => {
+        shareCode = randomCode();
+        peer = new Peer(PEER_ID_PREFIX + shareCode);
+        peer.on("open", updateShareUI);
+        peer.on("error", (err) => {
+          if (err.type === "unavailable-id" && sharing()) {
+            // Code collision: retry with a fresh one
+            stopSharing();
+            startSharing();
+          } else if (err.type !== "peer-unavailable") {
+            setShareError(`Sharing error (${err.type}). Try again.`);
+            stopSharing();
+          }
+        });
+        peer.on("connection", (conn) => {
+          conn.on("open", () => {
+            viewers.push(conn);
+            conn.send(snapshotMsg());
+            updateShareUI();
+          });
+          conn.on("close", () => {
+            viewers = viewers.filter((c) => c !== conn);
+            updateShareUI();
+          });
+        });
+        updateShareUI();
+      })
+      .catch(() => setShareError("Could not load PeerJS — are you online?"));
+  }
+
+  function stopSharing() {
+    if (peer) peer.destroy();
+    peer = null;
+    viewers = [];
+    shareCode = null;
+    clearTimeout(stampTimer);
+    stampBatch = null;
+    updateShareUI();
+  }
+
+  function broadcast(msg) {
+    for (const conn of viewers) {
+      if (conn.open) conn.send(msg);
+    }
+  }
+
+  function snapshotMsg() {
+    return {
+      t: "snapshot",
+      v: 1,
+      map: state.mapDataUrl,
+      fog: state.hasMap ? fogCanvas.toDataURL("image/png") : null,
+      grid,
+      tokens,
+      images,
+    };
+  }
+
+  function broadcastSnapshot() {
+    if (sharing() && viewers.length) broadcast(snapshotMsg());
+  }
+
+  // Brush stamps are batched and flushed on a short timer so a stroke
+  // streams smoothly without a message per stamp.
+  function queueStamp(ix, iy, mode) {
+    if (!sharing() || !viewers.length) return;
+    if (
+      stampBatch &&
+      (stampBatch.mode !== mode ||
+        stampBatch.size !== state.brushSize ||
+        stampBatch.soft !== state.softness)
+    ) {
+      flushStamps();
+    }
+    if (!stampBatch) {
+      stampBatch = {
+        t: "stamps",
+        mode,
+        size: state.brushSize,
+        soft: state.softness,
+        pts: [],
+      };
+    }
+    stampBatch.pts.push([Math.round(ix), Math.round(iy)]);
+    if (!stampTimer) stampTimer = setTimeout(flushStamps, 80);
+  }
+
+  function flushStamps() {
+    clearTimeout(stampTimer);
+    stampTimer = null;
+    if (stampBatch && stampBatch.pts.length) broadcast(stampBatch);
+    stampBatch = null;
+  }
+
+  // Throttled grid + token sync; cheap enough to ride along with autosave
+  // scheduling and token drags.
+  function scheduleShareSync() {
+    if (!sharing() || !viewers.length || shareSyncTimer) return;
+    shareSyncTimer = setTimeout(() => {
+      shareSyncTimer = null;
+      broadcast({ t: "scene", grid, tokens });
+    }, 120);
+  }
+
+  function updateShareUI() {
+    shareOffDiv.hidden = sharing();
+    shareOnDiv.hidden = !sharing();
+    if (!sharing()) return;
+    shareCodeEl.textContent = shareCode;
+    const url = new URL("player.html", location.href);
+    url.searchParams.set("room", shareCode);
+    shareLinkInput.value = url.href;
+    shareViewersEl.textContent =
+      viewers.length === 1 ? "1 viewer connected" : `${viewers.length} viewers connected`;
+  }
+
+  function setShareError(msg) {
+    shareErrorEl.textContent = msg;
+    shareErrorEl.hidden = !msg;
+  }
+
   // ---------- Persistence ----------
   function scheduleAutosave() {
     clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(autosave, 800);
+    scheduleShareSync();
   }
 
   // Version 2 adds grid, tokens and the token image library; version 1
@@ -1060,6 +1256,7 @@
     if (stroking) {
       stroking = false;
       lastStamp = null;
+      flushStamps();
       fogChanged();
     }
     if (rectStart) {
@@ -1185,6 +1382,7 @@
     if (opening) {
       tokenPanelOpen = false; // one panel at a time
       updateTokenPanel();
+      sharePanel.hidden = true;
     }
     gridPanel.hidden = !opening;
   });
@@ -1196,6 +1394,31 @@
   document.getElementById("btn-token-close").addEventListener("click", () => {
     tokenPanelOpen = false;
     updateTokenPanel();
+  });
+
+  document.getElementById("btn-share").addEventListener("click", () => {
+    const opening = sharePanel.hidden;
+    if (opening) {
+      gridPanel.hidden = true;
+      tokenPanelOpen = false;
+      updateTokenPanel();
+    }
+    sharePanel.hidden = !opening;
+  });
+
+  document.getElementById("btn-share-close").addEventListener("click", () => {
+    sharePanel.hidden = true; // sharing itself keeps running
+  });
+
+  document.getElementById("btn-share-start").addEventListener("click", startSharing);
+  document.getElementById("btn-share-stop").addEventListener("click", stopSharing);
+
+  document.getElementById("btn-copy-link").addEventListener("click", () => {
+    shareLinkInput.select();
+    navigator.clipboard
+      ?.writeText(shareLinkInput.value)
+      .then(() => setStatus("Player link copied 📋"))
+      .catch(() => document.execCommand("copy"));
   });
 
   calibrateBtn.addEventListener("click", () => {
