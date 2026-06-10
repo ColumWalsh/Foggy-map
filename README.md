@@ -28,7 +28,8 @@ python3 -m http.server 8000
   move around.
 - **GM vs. player view** — as the GM you see through the fog at adjustable
   opacity; toggle 🎭 Player view to see the fully opaque fog your players
-  would see.
+  would see. Tokens standing in unrevealed fog are hidden in player view
+  (and in PNG exports), so lurking monsters stay secret.
 - **Grid overlay** (G) with one-drag calibration: drag a box along the map's
   printed grid and the cell size and offsets are derived automatically. The
   grid renders under the fog, so fogged areas reveal nothing. Settings cover
