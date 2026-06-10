@@ -227,6 +227,9 @@ body {
 
 .token.dragging { cursor: grabbing; }
 
+/* In player view, tokens standing in unrevealed fog are hidden */
+.token.fogged { visibility: hidden; }
+
 .token span { pointer-events: none; }
 
 /* ---------- Floating panels ---------- */

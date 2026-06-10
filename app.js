@@ -293,7 +293,30 @@
   }
 
   function fogChanged() {
+    updateTokenFogVisibility();
     scheduleAutosave();
+  }
+
+  // ---------- Token visibility under fog ----------
+  // Players shouldn't see tokens standing in unrevealed areas. A token is
+  // "fogged" when the fog is still opaque at its center.
+  const FOG_HIDE_ALPHA = 128;
+
+  function fogAlphaAt(x, y) {
+    const cx = Math.max(0, Math.min(fogCanvas.width - 1, Math.round(x)));
+    const cy = Math.max(0, Math.min(fogCanvas.height - 1, Math.round(y)));
+    return fogCtx.getImageData(cx, cy, 1, 1).data[3];
+  }
+
+  function tokenFogged(t) {
+    return fogAlphaAt(t.x, t.y) > FOG_HIDE_ALPHA;
+  }
+
+  function updateTokenFogVisibility() {
+    for (const t of tokens) {
+      const el = tokenLayer.querySelector(`[data-id="${t.id}"]`);
+      if (el) el.classList.toggle("fogged", state.playerView && tokenFogged(t));
+    }
   }
 
   // ---------- Grid ----------
@@ -415,6 +438,10 @@
 
   let selectedTokenId = null;
   let tokenDrag = null; // {id, startIx, startIy, origX, origY, moved, before}
+  // Selection (click) and the inspector panel (double-click) are separate:
+  // a single click/tap only selects, so quick moves don't pop the panel up.
+  let tokenPanelOpen = false;
+  let lastTokenTap = { id: null, time: 0 };
 
   function selectedToken() {
     return tokens.find((t) => t.id === selectedTokenId) || null;
@@ -428,10 +455,11 @@
       el.dataset.id = t.id;
       if (t.shape === "square") el.classList.add("square");
       if (t.id === selectedTokenId) el.classList.add("selected");
+      if (state.playerView && tokenFogged(t)) el.classList.add("fogged");
       positionTokenEl(t, el);
       el.style.setProperty("--token-color", t.color);
       el.style.borderWidth = `${Math.max(2, t.size * 0.06)}px`;
-      el.title = t.label;
+      el.title = `${t.label} — double-click to edit`;
       if (t.imageId && images[t.imageId]) {
         el.style.backgroundImage = `url("${images[t.imageId]}")`;
       } else {
@@ -474,8 +502,9 @@
 
   function updateTokenPanel() {
     const t = selectedToken();
-    tokenPanel.hidden = !t;
-    if (!t) return;
+    if (!t) tokenPanelOpen = false;
+    tokenPanel.hidden = !t || !tokenPanelOpen;
+    if (tokenPanel.hidden) return;
     gridPanel.hidden = true;
     tokenLabelInput.value = t.label;
     tokenSizeInput.value = t.size;
@@ -530,6 +559,7 @@
     };
     snapToken(t);
     tokens.push(t);
+    tokenPanelOpen = true; // a fresh token usually wants a name straight away
     selectToken(t.id);
     scheduleAutosave();
   }
@@ -562,6 +592,14 @@
     if (!t) return;
     const before = JSON.stringify(tokens);
     selectToken(t.id);
+    // Double-click / double-tap opens the inspector (dblclick is unreliable
+    // on mobile, so detect it from successive pointerdowns ourselves).
+    const now = performance.now();
+    if (lastTokenTap.id === t.id && now - lastTokenTap.time < 350) {
+      tokenPanelOpen = true;
+      updateTokenPanel();
+    }
+    lastTokenTap = { id: t.id, time: now };
     // selectToken re-rendered the layer; capture on the fresh element
     const liveEl = tokenLayer.querySelector(`[data-id="${t.id}"]`);
     const p = screenToImage(e.clientX, e.clientY);
@@ -620,6 +658,7 @@
     if (tokenDrag.moved && t) {
       snapToken(t);
       positionTokenEl(t);
+      updateTokenFogVisibility();
       scheduleAutosave();
     }
     tokenDrag = null;
@@ -825,7 +864,9 @@
     ctx.drawImage(mapCanvas, 0, 0);
     if (grid.enabled) ctx.drawImage(gridCanvas, 0, 0);
     ctx.drawImage(fogCanvas, 0, 0); // fog at full opacity = what players see
-    for (const t of tokens) drawTokenOnCanvas(ctx, t);
+    for (const t of tokens) {
+      if (!tokenFogged(t)) drawTokenOnCanvas(ctx, t);
+    }
     out.toBlob((blob) => {
       downloadBlob(blob, `foggymap-player-view-${timestamp()}.png`);
       setStatus("Player view exported 🖼️");
@@ -1002,6 +1043,8 @@
     const p = screenToImage(e.clientX, e.clientY);
     if (stroking) {
       strokeTo(p.ix, p.iy, state.tool);
+      // Brushing in player view can reveal/cover tokens mid-stroke
+      if (state.playerView) updateTokenFogVisibility();
     } else if (rectStart) {
       updateRectPreview(rectStart, p);
     } else if (measureStart) {
@@ -1128,6 +1171,7 @@
     state.playerView = !state.playerView;
     playerViewBtn.classList.toggle("on", state.playerView);
     updateFogOpacity();
+    updateTokenFogVisibility();
   });
 
   gridBtn.addEventListener("click", () => {
@@ -1138,7 +1182,10 @@
 
   document.getElementById("btn-grid-settings").addEventListener("click", () => {
     const opening = gridPanel.hidden;
-    if (opening && selectedTokenId) selectToken(null); // one panel at a time
+    if (opening) {
+      tokenPanelOpen = false; // one panel at a time
+      updateTokenPanel();
+    }
     gridPanel.hidden = !opening;
   });
 
@@ -1147,7 +1194,8 @@
   });
 
   document.getElementById("btn-token-close").addEventListener("click", () => {
-    selectToken(null);
+    tokenPanelOpen = false;
+    updateTokenPanel();
   });
 
   calibrateBtn.addEventListener("click", () => {
