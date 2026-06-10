@@ -62,6 +62,11 @@ python3 -m http.server 8000
   and its free public signaling server) — no backend, no accounts; both
   devices just need to stay online while sharing. Anyone with the room code
   can watch, so treat the link like an invite.
+- **Player participation** — unless the GM unchecks *"Players can move &
+  add tokens"* in the share panel, players can drag any visible token and
+  add their own tokens from an uploaded image (➕ Token on the player page).
+  The GM's browser stays authoritative: player actions are validated,
+  snapped to the grid, synced to everyone, and undoable by the GM.
 
 ## Keyboard shortcuts
 
