@@ -41,7 +41,7 @@ python3 -m http.server 8000
   drop an image straight onto a token, or reuse one from the session's image
   library (images are downscaled on import so storage stays small). Tokens
   drag with any tool active, optionally snap to grid cells, and show a live
-  distance readout while dragging.
+  distance readout while dragging. Double-click a token to open its editor.
 - **Undo / redo** (Ctrl+Z / Ctrl+Y) covering both fog edits and token
   changes, plus one-click Cover all / Reveal all.
 - **Autosave** — map, fog, grid, and tokens are saved to the browser's
