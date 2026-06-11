@@ -186,11 +186,6 @@ body {
   z-index: 5;
 }
 
-#rect-preview.hide-mode {
-  border-color: var(--danger);
-  background: rgba(255, 107, 107, 0.15);
-}
-
 #brush-cursor {
   position: absolute;
   border: 1.5px solid rgba(255, 255, 255, 0.9);

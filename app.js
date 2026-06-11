@@ -133,8 +133,6 @@
   const TOOL_LABELS = {
     reveal: "Reveal brush",
     hide: "Hide brush",
-    "reveal-rect": "Reveal rectangle",
-    "hide-rect": "Hide rectangle",
     pan: "Pan",
     measure: "Measure",
     calibrate: "Calibrate grid — drag a box along the map's grid",
@@ -295,25 +293,6 @@
       stampBrush(ix, iy, mode);
     }
     lastStamp = { ix, iy };
-  }
-
-  function applyRect(a, b, mode) {
-    const x = Math.min(a.ix, b.ix);
-    const y = Math.min(a.iy, b.iy);
-    const w = Math.abs(a.ix - b.ix);
-    const h = Math.abs(a.iy - b.iy);
-    if (w < 1 || h < 1) return;
-    pushUndo("fog");
-    if (mode === "reveal") {
-      fogCtx.globalCompositeOperation = "destination-out";
-      fogCtx.fillStyle = "rgba(0,0,0,1)";
-    } else {
-      fogCtx.globalCompositeOperation = "source-over";
-      fogCtx.fillStyle = FOG_COLOR;
-    }
-    fogCtx.fillRect(x, y, w, h);
-    broadcast({ t: "rect", mode, x, y, w, h });
-    fogChanged();
   }
 
   function fogChanged() {
@@ -1039,7 +1018,6 @@
   // and receives a full snapshot, then streamed updates:
   //   snapshot {map, fog, grid, tokens, images, aoes, edits}  join / map change
   //   stamps   {mode, size, soft, pts}                  batched brush stamps
-  //   rect     {mode, x, y, w, h}                       rectangle fog ops
   //   fill     {mode}                                   cover all / reveal all
   //   fog      {data}                                   full fog image (undo/redo)
   //   scene    {grid, tokens, aoes, edits}              grid/token/AoE state
@@ -1516,8 +1494,7 @@
     viewport.classList.toggle(
       "tool-rect",
       !effectivePan &&
-        (state.tool.endsWith("-rect") ||
-          state.tool === "measure" ||
+        (state.tool === "measure" ||
           state.tool === "calibrate" ||
           state.tool === "aoe")
     );
@@ -1573,9 +1550,8 @@
       stroking = true;
       lastStamp = null;
       strokeTo(p.ix, p.iy, state.tool);
-    } else if (state.tool.endsWith("-rect") || state.tool === "calibrate") {
+    } else if (state.tool === "calibrate") {
       rectStart = p;
-      rectPreview.classList.toggle("hide-mode", state.tool === "hide-rect");
       updateRectPreview(p, p);
       rectPreview.hidden = false;
     } else if (state.tool === "measure") {
@@ -1644,12 +1620,7 @@
       fogChanged();
     }
     if (rectStart) {
-      const p = screenToImage(e.clientX, e.clientY);
-      if (state.tool === "calibrate") {
-        applyCalibration(rectStart, p);
-      } else {
-        applyRect(rectStart, p, state.tool === "reveal-rect" ? "reveal" : "hide");
-      }
+      applyCalibration(rectStart, screenToImage(e.clientX, e.clientY));
       rectStart = null;
       rectPreview.hidden = true;
     }
@@ -2031,8 +2002,6 @@
     switch (e.key.toLowerCase()) {
       case "b": setTool("reveal"); break;
       case "h": setTool("hide"); break;
-      case "r": setTool("reveal-rect"); break;
-      case "t": setTool("hide-rect"); break;
       case "p": setTool("pan"); break;
       case "m": setTool("measure"); break;
       case "a": setTool("aoe"); break;
