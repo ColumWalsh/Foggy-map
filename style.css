@@ -47,6 +47,10 @@ body {
 .toolbar-group {
   display: flex;
   align-items: center;
+  /* Groups must wrap internally too: on narrow screens a wide group (e.g.
+     the seven tool buttons) would otherwise overflow off-screen, hiding
+     its trailing buttons entirely. */
+  flex-wrap: wrap;
   gap: 6px;
 }
 
