@@ -71,6 +71,9 @@
   const tokenImageInput = document.getElementById("token-image-input");
   const imageLibraryDiv = document.getElementById("image-library");
 
+  const aoeLayer = document.getElementById("aoe-layer");
+  const aoePanel = document.getElementById("aoe-panel");
+
   const sharePanel = document.getElementById("share-panel");
   const shareOffDiv = document.getElementById("share-off");
   const shareOnDiv = document.getElementById("share-on");
@@ -135,6 +138,7 @@
     pan: "Pan",
     measure: "Measure",
     calibrate: "Calibrate grid — drag a box along the map's grid",
+    aoe: "AoE marker — drag on the map to place",
   };
 
   // ---------- View transform ----------
@@ -200,11 +204,18 @@
       updateUndoButtons();
       dropHint.hidden = true;
 
+      aoeLayer.setAttribute("width", img.naturalWidth);
+      aoeLayer.setAttribute("height", img.naturalHeight);
+      aoeLayer.setAttribute("viewBox", `0 0 ${img.naturalWidth} ${img.naturalHeight}`);
+
       tokens = session?.tokens || [];
       images = session?.images || {};
+      aoes = session?.aoes || [];
+      selectedAoeId = null;
       grid = { ...defaultGrid(), ...(session?.grid || {}) };
       ensureImageCache();
       renderTokens();
+      renderAoes();
       syncGridUI();
       drawGrid();
 
@@ -700,6 +711,172 @@
   tokenLayer.addEventListener("pointerup", endTokenDrag);
   tokenLayer.addEventListener("pointercancel", endTokenDrag);
 
+  // ---------- AoE markers ----------
+  // Semi-transparent overlays (circle, cone, square, line) rendered as SVG
+  // paths between the grid and the fog, so unrevealed areas hide them from
+  // players. Drag on the map with the AoE tool to place one: distance sets
+  // the size, direction aims cones, squares, and lines.
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const CONE_HALF_ANGLE = (53.13 / 2) * (Math.PI / 180); // D&D: width = length
+
+  let aoes = []; // {id, shape, x, y, size, angle, color, opacity}
+  let selectedAoeId = null;
+  let aoeDraft = null; // marker being created by the current drag
+  let aoeDrag = null; // {id, el, startIx, startIy, origX, origY, moved, before}
+  const aoeStyle = { shape: "circle", color: PALETTE[0], opacity: 0.35 };
+
+  function pathFor(a) {
+    const r2 = (n) => Math.round(n * 100) / 100;
+    const { x, y, size: s, angle: ang } = a;
+    if (a.shape === "circle") {
+      return (
+        `M ${r2(x - s)} ${r2(y)} ` +
+        `a ${r2(s)} ${r2(s)} 0 1 0 ${r2(2 * s)} 0 ` +
+        `a ${r2(s)} ${r2(s)} 0 1 0 ${r2(-2 * s)} 0 Z`
+      );
+    }
+    if (a.shape === "cone") {
+      const a1 = ang - CONE_HALF_ANGLE;
+      const a2 = ang + CONE_HALF_ANGLE;
+      return (
+        `M ${r2(x)} ${r2(y)} ` +
+        `L ${r2(x + s * Math.cos(a1))} ${r2(y + s * Math.sin(a1))} ` +
+        `A ${r2(s)} ${r2(s)} 0 0 1 ` +
+        `${r2(x + s * Math.cos(a2))} ${r2(y + s * Math.sin(a2))} Z`
+      );
+    }
+    // square and line: a rectangle anchored at the origin, extending `size`
+    // along the drag direction; squares are as wide as they are deep, lines
+    // are one grid cell wide.
+    const half =
+      a.shape === "square"
+        ? s / 2
+        : Math.max(6, grid.enabled ? grid.cellSize / 2 : s * 0.08);
+    const dx = Math.cos(ang);
+    const dy = Math.sin(ang);
+    const px = -dy;
+    const py = dx;
+    const corners = [
+      [x + px * half, y + py * half],
+      [x - px * half, y - py * half],
+      [x - px * half + dx * s, y - py * half + dy * s],
+      [x + px * half + dx * s, y + py * half + dy * s],
+    ];
+    return "M " + corners.map(([cx, cy]) => `${r2(cx)} ${r2(cy)}`).join(" L ") + " Z";
+  }
+
+  function renderAoes() {
+    aoeLayer.innerHTML = "";
+    const list = aoeDraft ? [...aoes, aoeDraft] : aoes;
+    for (const a of list) {
+      if (a.size < 1) continue;
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", pathFor(a));
+      path.setAttribute("fill", a.color);
+      path.setAttribute("fill-opacity", a.opacity);
+      path.setAttribute("stroke", a.color);
+      path.setAttribute("stroke-opacity", 0.85);
+      path.setAttribute("stroke-width", a.id === selectedAoeId || a === aoeDraft ? 4 : 3);
+      if (a.id === selectedAoeId || a === aoeDraft) {
+        path.setAttribute("stroke-dasharray", "8 6");
+      }
+      path.classList.add("aoe-shape");
+      path.dataset.id = a.id;
+      aoeLayer.appendChild(path);
+    }
+  }
+
+  function deleteAoe(id) {
+    if (!aoes.some((a) => a.id === id)) return;
+    pushUndo("aoes");
+    aoes = aoes.filter((a) => a.id !== id);
+    if (selectedAoeId === id) selectedAoeId = null;
+    renderAoes();
+    scheduleAutosave();
+  }
+
+  // Mirror of the SVG rendering for the exported image (Path2D accepts the
+  // same path data).
+  function drawAoesOnCanvas(ctx) {
+    for (const a of aoes) {
+      if (a.size < 1) continue;
+      const path = new Path2D(pathFor(a));
+      ctx.save();
+      ctx.fillStyle = a.color;
+      ctx.strokeStyle = a.color;
+      ctx.globalAlpha = a.opacity;
+      ctx.fill(path);
+      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = 3;
+      ctx.stroke(path);
+      ctx.restore();
+    }
+  }
+
+  // Move an existing marker by dragging it (AoE tool only; see the CSS
+  // pointer-events gate). Same capture-and-update pattern as tokens.
+  aoeLayer.addEventListener("pointerdown", (e) => {
+    if (state.tool !== "aoe" || e.button !== 0) return;
+    const el = e.target.closest(".aoe-shape");
+    if (!el) return;
+    const a = aoes.find((s) => s.id === el.dataset.id);
+    if (!a) return;
+    e.stopPropagation();
+    selectedAoeId = a.id;
+    renderAoes();
+    const live = aoeLayer.querySelector(`[data-id="${a.id}"]`);
+    const p = screenToImage(e.clientX, e.clientY);
+    aoeDrag = {
+      id: a.id,
+      el: live,
+      startIx: p.ix,
+      startIy: p.iy,
+      origX: a.x,
+      origY: a.y,
+      moved: false,
+      before: JSON.stringify(aoes),
+    };
+    live.setPointerCapture(e.pointerId);
+  });
+
+  aoeLayer.addEventListener("pointermove", (e) => {
+    if (!aoeDrag) return;
+    const a = aoes.find((s) => s.id === aoeDrag.id);
+    if (!a) {
+      aoeDrag = null;
+      return;
+    }
+    const p = screenToImage(e.clientX, e.clientY);
+    if (!aoeDrag.moved) {
+      const d = Math.hypot(
+        (p.ix - aoeDrag.startIx) * state.scale,
+        (p.iy - aoeDrag.startIy) * state.scale
+      );
+      if (d < 4) return;
+      aoeDrag.moved = true;
+      pushUndoEntry({ type: "aoes", data: aoeDrag.before });
+    }
+    a.x = aoeDrag.origX + (p.ix - aoeDrag.startIx);
+    a.y = aoeDrag.origY + (p.iy - aoeDrag.startIy);
+    aoeDrag.el.setAttribute("d", pathFor(a)); // no rebuild mid-drag
+    scheduleShareSync();
+  });
+
+  function endAoeDrag() {
+    if (!aoeDrag) return;
+    if (aoeDrag.moved) scheduleAutosave();
+    aoeDrag = null;
+  }
+
+  aoeLayer.addEventListener("pointerup", endAoeDrag);
+  aoeLayer.addEventListener("pointercancel", endAoeDrag);
+
+  aoeLayer.addEventListener("dblclick", (e) => {
+    if (state.tool !== "aoe") return;
+    const el = e.target.closest(".aoe-shape");
+    if (el) deleteAoe(el.dataset.id);
+  });
+
   // ---------- Token image library ----------
   // Two kinds of token images:
   //  - session uploads: downscaled dataURLs in `images`, persisted in saves
@@ -782,14 +959,14 @@
   }
 
   // ---------- Undo / redo ----------
-  // The stacks hold tagged snapshots of a single state slice each:
-  // {type: "fog", data: dataURL} or {type: "tokens", data: JSON string}.
-  // Undoing an entry restores only that slice and pushes the slice's
-  // current state onto the other stack.
+  // The stacks hold tagged snapshots of a single state slice each: "fog"
+  // (a dataURL), "tokens", or "aoes" (JSON strings). Undoing an entry
+  // restores only that slice and pushes the slice's current state onto the
+  // other stack.
   function snapshot(type) {
-    return type === "fog"
-      ? { type, data: fogCanvas.toDataURL("image/png") }
-      : { type, data: JSON.stringify(tokens) };
+    if (type === "fog") return { type, data: fogCanvas.toDataURL("image/png") };
+    if (type === "aoes") return { type, data: JSON.stringify(aoes) };
+    return { type, data: JSON.stringify(tokens) };
   }
 
   function pushUndoEntry(entry) {
@@ -809,6 +986,11 @@
         broadcast({ t: "fog", data: entry.data });
         fogChanged();
       });
+    } else if (entry.type === "aoes") {
+      aoes = JSON.parse(entry.data);
+      if (!aoes.some((a) => a.id === selectedAoeId)) selectedAoeId = null;
+      renderAoes();
+      scheduleAutosave();
     } else {
       tokens = JSON.parse(entry.data);
       renderTokens();
@@ -855,12 +1037,12 @@
   // ---------- Live share (PeerJS) ----------
   // The GM hosts a room (peer id "foggymap-<CODE>"); player.html connects
   // and receives a full snapshot, then streamed updates:
-  //   snapshot {map, fog, grid, tokens, images, edits}  on join / map change
+  //   snapshot {map, fog, grid, tokens, images, aoes, edits}  join / map change
   //   stamps   {mode, size, soft, pts}                  batched brush stamps
   //   rect     {mode, x, y, w, h}                       rectangle fog ops
   //   fill     {mode}                                   cover all / reveal all
   //   fog      {data}                                   full fog image (undo/redo)
-  //   scene    {grid, tokens, edits}                    grid + token state
+  //   scene    {grid, tokens, aoes, edits}              grid/token/AoE state
   //   image    {id, data}                               new token image
   // Players send back (applied by the GM, who stays authoritative, then
   // rebroadcast via the scene sync):
@@ -1073,6 +1255,7 @@
       grid,
       tokens,
       images,
+      aoes,
       edits: allowPlayerEdits,
     };
   }
@@ -1119,7 +1302,7 @@
     if (!sharing() || !viewers.length || shareSyncTimer) return;
     shareSyncTimer = setTimeout(() => {
       shareSyncTimer = null;
-      broadcast({ t: "scene", grid, tokens, edits: allowPlayerEdits });
+      broadcast({ t: "scene", grid, tokens, aoes, edits: allowPlayerEdits });
     }, 120);
   }
 
@@ -1158,6 +1341,7 @@
       grid,
       tokens,
       images,
+      aoes,
     };
   }
 
@@ -1217,6 +1401,7 @@
     const ctx = out.getContext("2d");
     ctx.drawImage(mapCanvas, 0, 0);
     if (grid.enabled) ctx.drawImage(gridCanvas, 0, 0);
+    drawAoesOnCanvas(ctx); // under the fog, like on screen
     ctx.drawImage(fogCanvas, 0, 0); // fog at full opacity = what players see
     for (const t of tokens) {
       if (!tokenFogged(t)) drawTokenOnCanvas(ctx, t);
@@ -1305,6 +1490,19 @@
     toolButtons.forEach((b) => b.classList.toggle("active", b.dataset.tool === tool));
     calibrateBtn.classList.toggle("active", tool === "calibrate");
     statusTool.textContent = `Tool: ${TOOL_LABELS[tool]}`;
+    if (tool === "aoe") {
+      aoePanel.hidden = false;
+      gridPanel.hidden = true;
+      sharePanel.hidden = true;
+      tokenPanelOpen = false;
+      updateTokenPanel();
+    } else {
+      aoePanel.hidden = true;
+      if (selectedAoeId) {
+        selectedAoeId = null;
+        renderAoes();
+      }
+    }
     updateViewportCursor();
   }
 
@@ -1320,8 +1518,10 @@
       !effectivePan &&
         (state.tool.endsWith("-rect") ||
           state.tool === "measure" ||
-          state.tool === "calibrate")
+          state.tool === "calibrate" ||
+          state.tool === "aoe")
     );
+    viewport.classList.toggle("tool-aoe", !effectivePan && state.tool === "aoe");
     brushCursor.hidden = effectivePan || !state.tool.match(/^(reveal|hide)$/) || !state.hasMap;
   }
 
@@ -1381,6 +1581,21 @@
     } else if (state.tool === "measure") {
       measureStart = p;
       drawMeasureLine(p, p);
+    } else if (state.tool === "aoe") {
+      if (selectedAoeId) {
+        selectedAoeId = null;
+        renderAoes();
+      }
+      aoeDraft = {
+        id: newId("a"),
+        shape: aoeStyle.shape,
+        x: p.ix,
+        y: p.iy,
+        size: 0,
+        angle: 0,
+        color: aoeStyle.color,
+        opacity: aoeStyle.opacity,
+      };
     }
   });
 
@@ -1403,6 +1618,17 @@
       updateRectPreview(rectStart, p);
     } else if (measureStart) {
       drawMeasureLine(measureStart, p);
+    } else if (aoeDraft) {
+      const dx = p.ix - aoeDraft.x;
+      const dy = p.iy - aoeDraft.y;
+      aoeDraft.size = Math.hypot(dx, dy);
+      aoeDraft.angle = Math.atan2(dy, dx);
+      renderAoes();
+      const rect = viewport.getBoundingClientRect();
+      measureLabel.textContent = formatDistance(aoeDraft.size, 0);
+      measureLabel.style.left = `${e.clientX - rect.left + 16}px`;
+      measureLabel.style.top = `${e.clientY - rect.top + 16}px`;
+      measureLabel.hidden = false;
     }
   });
 
@@ -1430,6 +1656,17 @@
     if (measureStart) {
       measureStart = null;
       clearOverlay();
+    }
+    if (aoeDraft) {
+      if (aoeDraft.size >= 4) {
+        pushUndo("aoes");
+        aoes.push(aoeDraft);
+        selectedAoeId = aoeDraft.id;
+        scheduleAutosave();
+      }
+      aoeDraft = null;
+      renderAoes();
+      measureLabel.hidden = true;
     }
   }
 
@@ -1573,7 +1810,7 @@
 
   document.getElementById("share-edits").addEventListener("change", (e) => {
     allowPlayerEdits = e.target.checked;
-    broadcast({ t: "scene", grid, tokens, edits: allowPlayerEdits });
+    broadcast({ t: "scene", grid, tokens, aoes, edits: allowPlayerEdits });
   });
 
   document.getElementById("btn-copy-link").addEventListener("click", () => {
@@ -1695,6 +1932,54 @@
   document.getElementById("btn-token-duplicate").addEventListener("click", duplicateSelectedToken);
   document.getElementById("btn-token-delete").addEventListener("click", deleteSelectedToken);
 
+  const aoeShapeButtons = [...document.querySelectorAll(".aoe-shape-btn")];
+  function syncAoeShapeButtons() {
+    aoeShapeButtons.forEach((b) =>
+      b.classList.toggle("active", b.dataset.shape === aoeStyle.shape)
+    );
+  }
+  aoeShapeButtons.forEach((b) =>
+    b.addEventListener("click", () => {
+      aoeStyle.shape = b.dataset.shape;
+      syncAoeShapeButtons();
+    })
+  );
+  syncAoeShapeButtons();
+
+  {
+    const aoeColorsDiv = document.getElementById("aoe-colors");
+    for (const c of PALETTE) {
+      const s = document.createElement("div");
+      s.className = "swatch" + (c === aoeStyle.color ? " active" : "");
+      s.style.background = c;
+      s.title = "Marker color";
+      s.addEventListener("click", () => {
+        aoeStyle.color = c;
+        [...aoeColorsDiv.children].forEach((el) =>
+          el.classList.toggle("active", el === s)
+        );
+      });
+      aoeColorsDiv.appendChild(s);
+    }
+  }
+
+  document.getElementById("aoe-opacity").addEventListener("input", (e) => {
+    aoeStyle.opacity = +e.target.value / 100;
+  });
+
+  document.getElementById("btn-aoe-clear").addEventListener("click", () => {
+    if (!aoes.length) return;
+    pushUndo("aoes");
+    aoes = [];
+    selectedAoeId = null;
+    renderAoes();
+    scheduleAutosave();
+  });
+
+  document.getElementById("btn-aoe-close").addEventListener("click", () => {
+    aoePanel.hidden = true;
+  });
+
   undoBtn.addEventListener("click", undo);
   redoBtn.addEventListener("click", redo);
   document.getElementById("btn-cover-all").addEventListener("click", () => coverAll(true));
@@ -1750,15 +2035,20 @@
       case "t": setTool("hide-rect"); break;
       case "p": setTool("pan"); break;
       case "m": setTool("measure"); break;
+      case "a": setTool("aoe"); break;
       case "g": gridBtn.click(); break;
       case "n": addToken(); break;
       case "delete":
       case "backspace":
-        deleteSelectedToken();
+        if (selectedAoeId) deleteAoe(selectedAoeId);
+        else deleteSelectedToken();
         break;
       case "escape":
         if (state.tool === "calibrate") setTool(toolBeforeCalibrate || "reveal");
-        else if (selectedTokenId) selectToken(null);
+        else if (selectedAoeId) {
+          selectedAoeId = null;
+          renderAoes();
+        } else if (selectedTokenId) selectToken(null);
         break;
       case "v": playerViewBtn.click(); break;
       case "o": fileInput.click(); break;

@@ -148,6 +148,28 @@ body {
   pointer-events: none;
 }
 
+#aoe-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+/* AoE markers are interactive only while the AoE tool is active, so a big
+   marker never blocks brushing the fog underneath it. */
+.aoe-shape { pointer-events: none; }
+
+#viewport.tool-aoe .aoe-shape {
+  pointer-events: auto;
+  cursor: move;
+}
+
+.aoe-shape-btn { font-size: 15px; }
+.aoe-shape-btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
 #map-canvas {
   box-shadow: 0 0 0 1px var(--panel-edge), 0 12px 48px rgba(0, 0, 0, 0.6);
 }

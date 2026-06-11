@@ -37,6 +37,12 @@ python3 -m http.server 8000
   diagonal rule (Euclidean or D&D 5e).
 - **Measure tool** (M) — drag to get a live distance readout in cells and
   scaled units.
+- **AoE markers** (A) — semi-transparent area-of-effect overlays: circles,
+  D&D-style cones (width = length), squares, and one-cell-wide lines. Drag
+  on the map to place one — distance sets the size (with a live readout in
+  grid units), direction aims it. Drag to move, Delete or double-click to
+  remove. Markers render under the fog, so players only see them in
+  revealed areas, and they sync to live-share viewers and PNG exports.
 - **Tokens** (N) — movable player/monster markers. Colored circles or squares
   with automatic initials, or **custom images**: set a portrait from a file,
   drop an image straight onto a token, or reuse one from the session's image
