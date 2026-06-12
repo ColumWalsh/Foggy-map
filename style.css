@@ -47,6 +47,10 @@ body {
 .toolbar-group {
   display: flex;
   align-items: center;
+  /* Groups must wrap internally too: on narrow screens a wide group (e.g.
+     the seven tool buttons) would otherwise overflow off-screen, hiding
+     its trailing buttons entirely. */
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -180,11 +184,6 @@ body {
   background: var(--accent-soft);
   pointer-events: none;
   z-index: 5;
-}
-
-#rect-preview.hide-mode {
-  border-color: var(--danger);
-  background: rgba(255, 107, 107, 0.15);
 }
 
 #brush-cursor {

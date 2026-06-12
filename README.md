@@ -23,7 +23,6 @@ python3 -m http.server 8000
 - **Upload a map** via the 📂 button, drag-and-drop, or paste from clipboard.
   The map starts fully covered in fog.
 - **Reveal / hide brushes** with adjustable size and edge softness.
-- **Rectangle tools** to reveal or re-fog rectangular areas.
 - **Pan & zoom** — mouse wheel to zoom, middle-drag / hold Space / Pan tool to
   move around.
 - **GM vs. player view** — as the GM you see through the fog at adjustable
@@ -88,8 +87,6 @@ python3 -m http.server 8000
 | --- | --- |
 | `B` | Reveal brush |
 | `H` | Hide brush |
-| `R` | Reveal rectangle |
-| `T` | Hide rectangle |
 | `P` | Pan tool (or hold `Space`, or middle mouse drag) |
 | `M` | Measure tool |
 | `G` | Toggle grid overlay |

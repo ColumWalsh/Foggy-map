@@ -281,17 +281,6 @@
         for (const [x, y] of msg.pts) stampBrush(x, y, msg.mode, msg.size, msg.soft);
         renderTokens();
         break;
-      case "rect":
-        if (msg.mode === "reveal") {
-          fogCtx.globalCompositeOperation = "destination-out";
-          fogCtx.fillStyle = "rgba(0,0,0,1)";
-        } else {
-          fogCtx.globalCompositeOperation = "source-over";
-          fogCtx.fillStyle = FOG_COLOR;
-        }
-        fogCtx.fillRect(msg.x, msg.y, msg.w, msg.h);
-        renderTokens();
-        break;
       case "fill":
         fogCtx.globalCompositeOperation = "source-over";
         if (msg.mode === "hide") {
