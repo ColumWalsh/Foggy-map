@@ -36,8 +36,6 @@
   const sessionInput = document.getElementById("session-input");
   const brushSizeInput = document.getElementById("brush-size");
   const brushSizeValue = document.getElementById("brush-size-value");
-  const brushSoftInput = document.getElementById("brush-soft");
-  const fogOpacityInput = document.getElementById("fog-opacity");
   const toolButtons = [...document.querySelectorAll("#tools .tool")];
   const undoBtn = document.getElementById("btn-undo");
   const redoBtn = document.getElementById("btn-redo");
@@ -91,9 +89,9 @@
     panY: 0,
     tool: "reveal",
     brushSize: 60, // diameter in image pixels
-    softness: 0.5,
+    softness: 0.5, // brush edge softness (fixed)
     playerView: false,
-    fogOpacity: 0.65,
+    fogOpacity: 0.65, // how see-through fog is for the GM (players get 1)
   };
 
   // Scene data, persisted in sessions alongside the map and fog.
@@ -1721,14 +1719,6 @@
   );
 
   brushSizeInput.addEventListener("input", () => setBrushSize(+brushSizeInput.value));
-  brushSoftInput.addEventListener("input", () => {
-    state.softness = +brushSoftInput.value / 100;
-  });
-
-  fogOpacityInput.addEventListener("input", () => {
-    state.fogOpacity = +fogOpacityInput.value / 100;
-    updateFogOpacity();
-  });
 
   playerViewBtn.addEventListener("click", () => {
     state.playerView = !state.playerView;
