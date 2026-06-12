@@ -73,7 +73,10 @@ python3 -m http.server 8000
   The connection is peer-to-peer over WebRTC (via [PeerJS](https://peerjs.com)
   and its free public signaling server) — no backend, no accounts; both
   devices just need to stay online while sharing. Anyone with the room code
-  can watch, so treat the link like an invite.
+  can watch, so treat the link like an invite. Note that fog is a
+  presentation layer, not a security boundary: the player client receives
+  the full map image and hides it locally, so a determined player with
+  browser dev tools can extract the unfogged map.
 - **Player participation** — unless the GM unchecks *"Players can move &
   add tokens"* in the share panel, players can drag any visible token and
   add their own tokens from an uploaded image (➕ Token on the player page).
