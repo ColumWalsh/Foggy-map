@@ -518,6 +518,7 @@
     if (tokenPanel.hidden) return;
     gridPanel.hidden = true;
     sharePanel.hidden = true;
+    aoePanel.hidden = true;
     tokenLabelInput.value = t.label;
     tokenSizeInput.value = t.size;
     tokenShapeInput.value = t.shape;
@@ -1739,6 +1740,7 @@
       tokenPanelOpen = false; // one panel at a time
       updateTokenPanel();
       sharePanel.hidden = true;
+      aoePanel.hidden = true;
     }
     gridPanel.hidden = !opening;
   });
@@ -1756,6 +1758,7 @@
     const opening = sharePanel.hidden;
     if (opening) {
       gridPanel.hidden = true;
+      aoePanel.hidden = true;
       tokenPanelOpen = false;
       updateTokenPanel();
     }
