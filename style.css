@@ -168,6 +168,10 @@ body {
   cursor: move;
 }
 
+/* The AoE layer sits under the fog canvas; with the AoE tool active the
+   canvases must not swallow clicks, or the shapes below are unreachable. */
+#viewport.tool-aoe #stage canvas { pointer-events: none; }
+
 .aoe-shape-btn { font-size: 15px; }
 .aoe-shape-btn.active {
   background: var(--accent-soft);
