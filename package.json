@@ -1,0 +1,12 @@
+{
+  "name": "foggy-map",
+  "private": true,
+  "description": "Dev dependencies for the headless test suite only — the app itself is static with no build step.",
+  "scripts": {
+    "test": "node test/foggy-map-test.js"
+  },
+  "devDependencies": {
+    "canvas": "^3.2.3",
+    "jsdom": "^29.1.1"
+  }
+}

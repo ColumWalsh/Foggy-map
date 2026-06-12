@@ -121,7 +121,9 @@
 
   // Pointer interaction state
   let panning = false;
+  let panLast = null; // last client coords; movementX/Y is unreliable
   let stroking = false;
+  let strokeMode = "reveal"; // captured at stroke start so B/H mid-drag can't flip it
   let rectStart = null; // {ix, iy} image coords
   let lastStamp = null; // {ix, iy}
   let spaceHeld = false;
@@ -315,7 +317,7 @@
 
   function updateTokenFogVisibility() {
     for (const t of tokens) {
-      const el = tokenLayer.querySelector(`[data-id="${t.id}"]`);
+      const el = tokenLayer.querySelector(idSel(t.id));
       if (el) el.classList.toggle("fogged", state.playerView && tokenFogged(t));
     }
   }
@@ -397,6 +399,9 @@
   }
 
   function formatDistance(dxPx, dyPx) {
+    // Without the grid on, cell/unit numbers would be based on the default
+    // cell size and mislead; report plain pixels instead.
+    if (!grid.enabled) return `${Math.round(Math.hypot(dxPx, dyPx))} px`;
     const cells =
       grid.diagRule === "dnd"
         ? Math.max(Math.abs(dxPx), Math.abs(dyPx)) / grid.cellSize
@@ -448,6 +453,12 @@
     return tokens.find((t) => t.id === selectedTokenId) || null;
   }
 
+  // Build an attribute selector for ids that may come from saved sessions
+  // or remote players — unescaped quotes/brackets make querySelector throw.
+  function idSel(id) {
+    return `[data-id="${String(id).replace(/[^a-zA-Z0-9_-]/g, (c) => "\\" + c.codePointAt(0).toString(16) + " ")}"]`;
+  }
+
   let tokenRenderPending = false;
 
   function renderTokens() {
@@ -483,7 +494,7 @@
     }
   }
 
-  function positionTokenEl(t, el = tokenLayer.querySelector(`[data-id="${t.id}"]`)) {
+  function positionTokenEl(t, el = tokenLayer.querySelector(idSel(t.id))) {
     if (!el) return;
     el.style.left = `${t.x - t.size / 2}px`;
     el.style.top = `${t.y - t.size / 2}px`;
@@ -620,7 +631,7 @@
     }
     lastTokenTap = { id: t.id, time: now };
     // selectToken re-rendered the layer; capture on the fresh element
-    const liveEl = tokenLayer.querySelector(`[data-id="${t.id}"]`);
+    const liveEl = tokenLayer.querySelector(idSel(t.id));
     const p = screenToImage(e.clientX, e.clientY);
     tokenDrag = {
       id: t.id,
@@ -674,7 +685,7 @@
   function endTokenDrag() {
     if (!tokenDrag) return;
     const t = tokens.find((tk) => tk.id === tokenDrag.id);
-    tokenLayer.querySelector(`[data-id="${tokenDrag.id}"]`)?.classList.remove("dragging");
+    tokenLayer.querySelector(idSel(tokenDrag.id))?.classList.remove("dragging");
     if (tokenDrag.moved && t) {
       snapToken(t);
       positionTokenEl(t);
@@ -802,7 +813,7 @@
     e.stopPropagation();
     selectedAoeId = a.id;
     renderAoes();
-    const live = aoeLayer.querySelector(`[data-id="${a.id}"]`);
+    const live = aoeLayer.querySelector(idSel(a.id));
     const p = screenToImage(e.clientX, e.clientY);
     aoeDrag = {
       id: a.id,
@@ -947,9 +958,15 @@
     return { type, data: JSON.stringify(tokens) };
   }
 
+  // Fog snapshots are full-resolution PNG dataURLs; cap the stack lower on
+  // very large maps to keep memory in check.
+  function undoDepth() {
+    return fogCanvas.width * fogCanvas.height > 4e6 ? 8 : MAX_UNDO;
+  }
+
   function pushUndoEntry(entry) {
     undoStack.push(entry);
-    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    while (undoStack.length > undoDepth()) undoStack.shift();
     redoStack.length = 0;
     updateUndoButtons();
   }
@@ -1142,13 +1159,17 @@
     } else if (msg.t === "token-add") {
       const tk = msg.token;
       if (!tk || typeof tk !== "object") return;
+      const SAFE_ID = /^[\w-]{1,40}$/;
       let imageId = null;
       if (
         msg.image &&
         typeof msg.image.id === "string" &&
+        SAFE_ID.test(msg.image.id) &&
         typeof msg.image.data === "string" &&
-        msg.image.data.startsWith("data:image/") &&
-        msg.image.data.length < 500000 // players downscale; reject anomalies
+        // strict: the player pipeline only emits base64 png/jpeg
+        /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(msg.image.data) &&
+        msg.image.data.length < 500000 && // players downscale; reject anomalies
+        Object.keys(images).length < 40 // cap the library against bloat
       ) {
         imageId = msg.image.id;
         images[imageId] = msg.image.data;
@@ -1157,7 +1178,7 @@
       }
       pushUndo("tokens"); // lets the GM undo a player's addition
       tokens.push({
-        id: typeof tk.id === "string" ? tk.id.slice(0, 40) : newId("t"),
+        id: typeof tk.id === "string" && SAFE_ID.test(tk.id) ? tk.id : newId("t"),
         x: Math.min(Math.max(Number(tk.x) || 0, 0), mapCanvas.width),
         y: Math.min(Math.max(Number(tk.y) || 0, 0), mapCanvas.height),
         size: Math.min(Math.max(Number(tk.size) || 50, 10), 400),
@@ -1533,6 +1554,7 @@
 
     if (wantsPan) {
       panning = true;
+      panLast = { x: e.clientX, y: e.clientY };
       viewport.classList.add("panning");
       viewport.setPointerCapture(e.pointerId);
       e.preventDefault();
@@ -1547,8 +1569,9 @@
     if (state.tool === "reveal" || state.tool === "hide") {
       pushUndo("fog");
       stroking = true;
+      strokeMode = state.tool;
       lastStamp = null;
-      strokeTo(p.ix, p.iy, state.tool);
+      strokeTo(p.ix, p.iy, strokeMode);
     } else if (state.tool === "calibrate") {
       rectStart = p;
       updateRectPreview(p, p);
@@ -1578,15 +1601,16 @@
     moveBrushCursor(e.clientX, e.clientY);
 
     if (panning) {
-      state.panX += e.movementX;
-      state.panY += e.movementY;
+      state.panX += e.clientX - panLast.x;
+      state.panY += e.clientY - panLast.y;
+      panLast = { x: e.clientX, y: e.clientY };
       applyTransform();
       return;
     }
 
     const p = screenToImage(e.clientX, e.clientY);
     if (stroking) {
-      strokeTo(p.ix, p.iy, state.tool);
+      strokeTo(p.ix, p.iy, strokeMode);
       // Brushing in player view can reveal/cover tokens mid-stroke
       if (state.playerView) updateTokenFogVisibility();
     } else if (rectStart) {

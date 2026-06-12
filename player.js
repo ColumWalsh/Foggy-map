@@ -171,8 +171,14 @@
     }
   }
 
+  // Ids come from the GM's scene and may originate from other players;
+  // escape them so querySelector can't throw on quotes/brackets.
+  function idSel(id) {
+    return `[data-id="${String(id).replace(/[^a-zA-Z0-9_-]/g, (c) => "\\" + c.codePointAt(0).toString(16) + " ")}"]`;
+  }
+
   function positionTokenEl(t) {
-    const el = tokenLayer.querySelector(`[data-id="${t.id}"]`);
+    const el = tokenLayer.querySelector(idSel(t.id));
     if (!el) return;
     el.style.left = `${t.x - t.size / 2}px`;
     el.style.top = `${t.y - t.size / 2}px`;
@@ -585,17 +591,20 @@
 
   // ---------- Pan & zoom ----------
   let panning = false;
+  let panLast = null; // movementX/Y is unreliable on touch and at page zoom
 
   viewport.addEventListener("pointerdown", (e) => {
     panning = true;
+    panLast = { x: e.clientX, y: e.clientY };
     viewport.classList.add("panning");
     viewport.setPointerCapture(e.pointerId);
   });
 
   viewport.addEventListener("pointermove", (e) => {
     if (!panning) return;
-    panX += e.movementX;
-    panY += e.movementY;
+    panX += e.clientX - panLast.x;
+    panY += e.clientY - panLast.y;
+    panLast = { x: e.clientX, y: e.clientY };
     applyTransform();
   });
 
